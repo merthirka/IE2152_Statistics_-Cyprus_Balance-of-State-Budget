@@ -1,0 +1,2754 @@
+---
+title: "IE2152 Statistics for IE Project Final Project"
+author: "Assoc. Prof. Özlem Şenvar / Res. Asst. M. Umut İzer"
+date: "13/06/2021"
+output:
+  word_document: default
+  latex_engine: xelatex
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+    knitr::opts_chunk$set(echo = TRUE)
+    RNGversion("3.6.1") 
+    
+#Necessary libraries that we use:
+require(BSDA)
+require(ggplot2)
+require(EnvStats)
+require(pwr)
+require(mosaic)
+require(MESS)
+
+#Necessary R Functions that we defined
+#The ci.plot function is defined to plot the confidence interval.
+ci.plot <- function(var,theta,lower,upper,type=c('add','multiply')){
+  if(type!='multiply')Plot_df <- data.frame(var = var, lower = theta-lower, upper = theta+upper)
+  if(type=='multiply')Plot_df <- data.frame(var = var, lower = lower, upper = upper)
+  ggplot(Plot_df) +  geom_point(aes(x=var, y=theta)) +  geom_errorbar(aes(x = var, ymin = lower, ymax = upper), width = 0.1) + labs(x = "", y = "Confidence Interval") 
+}
+
+#We can define our own function testmean.cv() to compare the test statistic with critical values, and make a decision.
+testmean.cv = function(cv,teststat,theta0,alpha,alternative=c("two.sided","greater","less"),theta=c("mu","p")){
+  alternative <- match.arg(alternative)
+  if(alternative=="two.sided"){
+    decision<-ifelse((teststat>cv||teststat<(-cv)),"is rejected","is not rejected")
+  }
+  if(alternative=="greater"){
+    decision<-ifelse(teststat>cv,"is rejected","is not rejected")
+  }
+  if(alternative=="less"){
+    decision<-ifelse(teststat<cv,"is rejected","is not rejected")
+  }
+  print(paste("H0:",theta,"=",theta0,decision,"at",alpha,"significance level"))
+}
+
+#We can define our own function test.pval() to compare the p-value with the significance level and make a decision.
+test.pval = function(pval,theta0,alpha,theta=c("mu","sigma","sigma^2","p")){
+  decision<-ifelse(pval<alpha,"is rejected","is not rejected")
+  print(paste("H0:", theta,"=",theta0,decision,"at",alpha,"significance level"))
+}
+
+#We can plot the hypothesis test by defining the function plot.hypothesis():
+#The parameters are theta0, critical value, standard deviation, sample size, type of test, and alternative hypothesis.
+plotmean.hypothesis <- function(theta0,thetac,df=NULL,type=c('z','t'),alternative=c("two.sided","greater","less")){
+  alternative <- match.arg(alternative)
+  if(type=='z'){
+    x<-seq(-4.5,4.5,by=0.01)
+    density<-dnorm(x,0,1)  }
+  if(type=='t'){
+    xlim <- round(qt(0.9999,df))
+    x<-seq(-xlim,xlim,by=0.01)
+    density<-dt(x,df=df)  }
+  plot(x,density,type="l",main=bquote(bold("Hypothesis testing ("*.(alternative)*") for "*H[0])),
+       xlab=bquote(.(type)[0]~"="~.(round(theta0,2))~"<-->"~.(type)[c]~"="~.(round(thetac,2))),yaxt='n',ylab="",lwd = 2)
+  abline(h = 0)
+  abline(v = theta0, col = "red", lwd = 2)
+  if(alternative!="less"){
+    polygon(c(x[x>=thetac], thetac), c(density[x>=thetac], 0), col="blue")}
+  if(alternative!="greater"){
+    if(alternative=="two.sided")thetac=-thetac
+    polygon(c(x[x<=thetac], thetac), c(density[x<=thetac], 0), col="blue")}
+}
+
+#In order to plot Type-II error, we can define our own function plotbeta():
+#The parameters are standard deviation, critical value, delta, sample size, and type of test.
+plotmean.beta <- function(sigma0,cv,delta,n,df=NULL,sigma=NULL,type=c('z','t','p'),alternative=c("two.sided","greater","less")){
+  alternative <- match.arg(alternative)
+  if(type=='z'){
+    xlim <- 4.5
+    x<-seq(-xlim,xlim,by=0.01)
+    density<-dnorm(x,0,1)
+    density1<-dnorm(x,delta*sqrt(n)/sigma0,1)
+    xlab='z'}
+  if(type=='t'){
+    xlim<-round(qt(0.9999,df))
+    x<-seq(-xlim,xlim,by=0.01)
+    density<-dt(x,df)
+    density1<-dt(x,df,ncp=delta*sqrt(n)/sigma0)
+    xlab='t'}
+  if(type=='p'){
+    xlim <- 4.5
+    x<-seq(-xlim,xlim,by=0.01)
+    density<-dnorm(x,0,1)
+    density1<-dnorm(x*sigma0/sigma,n*delta/sigma,1)
+    xlab='z'}
+  plot(x, density, type = "l", lwd = 3, main = bquote(bold("Distributions under"~H[0]~"and"~H[1])),xlab=xlab)
+  points(x, density1, type = "l", col = "red", lwd = 3)
+  if(alternative=="greater"){
+    polygon(c(x[x>=cv], cv), c(density[x>=cv], 0),col = "blue") 
+    abline(v = cv, col = "blue", lwd = 3)
+    polygon(c(x[x<cv], cv), c(density1[x<cv], 0), density = 15, col = "red")    }
+  if(alternative=="less"){
+    polygon(c(x[x<=cv], cv), c(density[x<=cv], 0),col = "blue")
+    abline(v = cv, col = "blue", lwd = 3)
+    polygon(c(x[x>cv], cv), c(density1[x>cv], 0), density = 15, col = "red")    }
+  if(alternative=="two.sided"){  
+    if(delta>0) abline(v = cv, col = "blue", lwd = 3)
+    if(delta<0) abline(v = -cv, col = "blue", lwd = 3)
+    polygon(c(x[x>=cv], cv), c(density[x>=cv], 0),col = "blue") 
+    polygon(c(x[x<=-cv], -cv), c(density[x<=-cv], 0),col = "blue")
+    poly_range <- x > -cv & x < cv 
+    polygon(c(-cv, x[poly_range], cv), c(0,density1[poly_range], 0), density = 15, col = "red")  }
+  abline(h = 0, lwd = 1)
+  legend("topright", legend=c("Type I error", "Type II error"),
+         col=c("blue", "red"), lty=1:2, cex=0.6)
+}
+
+#We can define our own function testvar.cv() to compare the test statistic with critical values, and make a decision.
+testvar.cv = function(cvlo=NULL,cvup=NULL,teststat,theta0,alpha,alternative=c("two.sided","greater","less")){
+  alternative <- match.arg(alternative)
+  theta=c("sigma^2")
+  if(alternative=="two.sided"){
+    decision<-ifelse((teststat>cvup||teststat<cvlo),"is rejected","is not rejected")
+  }
+  if(alternative=="greater"){
+    decision<-ifelse(teststat>cvup,"is rejected","is not rejected")
+  }
+  if(alternative=="less"){
+    decision<-ifelse(teststat<cvlo,"is rejected","is not rejected")
+  }
+  print(paste("H0:",theta,"=",theta0,decision,"at",alpha,"significance level"))
+}
+
+#To plot the hypothesis tests on population variance, the plotvar.hypothesis function is created.
+plotvar.hypothesis <- function(theta0,alpha,df1,df2=NULL,type=c('chisq','f'),alternative=c("two.sided","greater","less")){
+  type <- match.arg(type)
+  alternative <- match.arg(alternative)
+  if(type=='chisq'){
+    xlim <- round(qchisq(0.9999,df1))
+    x <- seq(0, xlim, 0.01)
+    density <- dchisq(x, df1)  
+    if(alternative=="two.sided"){
+      cvup <- qchisq(alpha/2,df1,lower=F)
+      cvlo <- qchisq(1-alpha/2,df1,lower=F)
+      xlab=bquote(chi[c[1]]^2~"="~.(round(cvlo,2))~"<-->"~chi[0]^2~"="~.(round(theta0,2))~"<-->"~chi[c[2]]^2~"="~.(round(cvup,2)))
+    }
+    if(alternative=="greater"){
+      cvup <- qchisq(alpha,df1,lower=F)
+      cvlo <- NULL
+      xlab=bquote(chi[0]^2~"="~.(round(theta0,2))~"<-->"~chi[c]^2~"="~.(round(cvup,2)))}
+    if(alternative=="less"){
+      cvup <- NULL
+      cvlo <- qchisq(1-alpha,df1,lower=F)
+      xlab=bquote(chi[0]^2~"="~.(round(theta0,2))~"<-->"~chi[c]^2~"="~.(round(cvlo,2)))}
+  }
+  if(type=='f'){
+    xlim <- round(qf(0.9999,df1,df2))
+    x <- seq(0, xlim, 0.001)
+    density <- df(x, df1,df2)  
+    if(alternative=="two.sided"){
+      cvup <- qf(alpha/2,df1,df2,lower=F)
+      cvlo <- qf(1-alpha/2,df1,df2,lower=F)
+      xlab=bquote(.(type)[c[1]]~"="~.(round(cvlo,2))~"<-->"~.(type)[0]~"="~.(round(theta0,2))~"<-->"~.(type)[c[2]]~"="~.(round(cvup,2)))
+    }
+    if(alternative=="greater"){
+      cvup <- qf(alpha,df1,df2,lower=F)
+      cvlo <- NULL
+      xlab=bquote(.(type)[0]~"="~.(round(theta0,2))~"<-->"~.(type)[c]~"="~.(round(cvup,2)))}
+    if(alternative=="less"){
+      cvup <- NULL
+      cvlo <- qf(1-alpha,df1,df2,lower=F)
+      xlab=bquote(.(type)[0]~"="~.(round(theta0,2))~"<-->"~.(type)[c]~"="~.(round(cvlo,2)))}
+  }
+  plot(x,density,type="l",main=bquote(bold("Hypothesis testing ("*.(alternative)*") for "*H[0])),
+       xlab=xlab,yaxt='n',ylab="",lwd = 2)
+  if(alternative!="less")polygon(c(x[x>=cvup], cvup), c(density[x>=cvup], 0), col="blue")
+  if(alternative!="greater")polygon(c(x[x<=cvlo], cvlo), c(density[x<=cvlo], 0), col="blue")
+  abline(h = 0)
+  abline(v = theta0, col = "red", lwd = 2)
+}
+
+#We can define a function named power.var.test that calculates the power of the variance tests:
+power.var.test <- function(n=NULL, lambda, sig.level, power=NULL, type=c('one.sample','two.sample'),alternative=c("one.sided","two.sided")){
+  if (sum(sapply(list(n, lambda, power, sig.level), is.null)) != 
+      1) 
+    stop("exactly one of n, lambda, power, and sig.level must be NULL")
+  if (!is.null(lambda) && is.character(lambda)) 
+    stop("lambda must be numeric")
+  if (!is.null(sig.level) && !is.numeric(sig.level) || any(0 > 
+                                                           sig.level | sig.level > 1)) 
+    stop(sQuote("sig.level"), " must be numeric in [0, 1]")
+  if (!is.null(power) && !is.numeric(power) || any(0 > power | 
+                                                   power > 1)) 
+    stop(sQuote("power"), " must be numeric in [0, 1]")
+  type <- match.arg(type)
+  alternative <- match.arg(alternative)
+  tside <- switch(alternative, one.sided = 1, two.sided = 2)
+  if(type=="two.sample"){
+    if(tside==2){p.body <- quote({
+      cvup <- qf(sig.level/2,n-1,n-1,lower=FALSE)
+      cvlo <- qf(1-sig.level/2,n-1,n-1,lower=FALSE)
+      1-diff(pf(c(cvup,cvlo)/lambda^2,n-1,n-1,lower=FALSE)) 
+    })
+    }
+    if(tside==1&&lambda<1) {p.body <- quote({
+      cvlo <- qf(1-sig.level,n-1,n-1,lower=FALSE)
+      1-pf(cvlo/lambda^2,n-1,n-1,lower=FALSE)
+    })
+    }
+    if(tside==1&&lambda>=1) {p.body <- quote({
+      cvup <- qf(sig.level,n-1,n-1,lower=FALSE)
+      pf(cvup/lambda^2,n-1,n-1,lower=FALSE)
+    })
+    }   
+  }
+  if(type=="one.sample"){
+    if(tside==2){p.body <- quote({
+      cvup <- qchisq(sig.level/2,n-1,lower=FALSE)
+      cvlo <- qchisq(1-sig.level/2,n-1,lower=FALSE)
+      1-diff(pchisq(c(cvup,cvlo)/lambda^2,n-1,lower=FALSE))
+    })
+    }
+    if(tside==1&&lambda<1) {p.body <- quote({
+      cvlo <- qchisq(1-sig.level,n-1,lower=FALSE)
+      1-pchisq(cvlo/lambda^2,n-1,lower=FALSE)
+    })
+    }
+    if(tside==1&&lambda>=1) {p.body <- quote({
+      cvup <- qchisq(sig.level,n-1,lower=FALSE)
+      pchisq(cvup/lambda^2,n-1,lower=FALSE)
+    })
+    }
+  }
+  if(is.null(power)) power <- eval(p.body)
+  else if (is.null(n)) 
+    n <- uniroot(function(n) eval(p.body) - power, c(2 + 
+                                                       1e-10, 1e+09))$root
+  else if (is.null(lambda)) {
+    if (tside == 2) 
+      lambda <- uniroot(function(lambda) eval(p.body) - power, c(1e-07, 
+                                                                 10))$root
+    if (tside == 1&&lambda<1) 
+      lambda <- uniroot(function(lambda) eval(p.body) - power, c(-10, 
+                                                                 5))$root
+    if (tside == 1&&lambda>=1) 
+      lambda <- uniroot(function(lambda) eval(p.body) - power, c(-5, 
+                                                                 10))$root
+  }
+  else if (is.null(sig.level)) 
+    sig.level <- uniroot(function(sig.level) eval(p.body) - 
+                           power, c(1e-10, 1 - 1e-10))$root
+  else stop("internal error")
+  NOTE <- switch(type, one.sample = NULL, 
+                 two.sample = "n is number in *each* group")
+  METHOD <- paste(switch(type, one.sample = "One-sample Chi-Squared Variance", 
+                         two.sample = "Two-sample F Variance"), 
+                  "test power calculation")
+  structure(list(n = n, lambda = lambda, sig.level = sig.level, power = power, 
+                 alternative = alternative, note=NOTE, method = METHOD), 
+            class = "power.htest")
+}
+
+#In order to plot the type-II error for the variance tests, we can define our plotvar.beta function:
+plotvar.beta <- function(lambda,alpha,df1,df2=NULL,type=c('chisq','f'),alternative=c("one.sided","two.sided")){
+  type <- match.arg(type)
+  alternative <- match.arg(alternative)
+  if(type=='chisq'){
+    xlim<-round(qchisq(0.9999,df1))
+    x <- seq(0, xlim, 0.01)
+    density <- dchisq(x, df1)
+    density1 <- dchisq(x/lambda^2, df1)
+    xlab=bquote(chi^2)
+    if(alternative=="two.sided"){
+      cvup <- qchisq(alpha/2,df1,lower=F)
+      cvlo <- qchisq(1-alpha/2,df1,lower=F)}
+    if(alternative=="one.sided"){
+      cvup <- qchisq(alpha,df1,lower=F)
+      cvlo <- qchisq(1-alpha,df1,lower=F)}}
+  if(type=='f'){
+    xlim<-round(qf(0.9999,df1,df2))
+    x <- seq(0, xlim, 0.001)
+    density <- df(x, df1,df2)
+    density1 <- df(x/lambda^2, df1,df2)
+    xlab=bquote(f)
+    if(alternative=="two.sided"){
+      cvup <- qf(alpha/2,df1,df2,lower=F)
+      cvlo <- qf(1-alpha/2,df1,df2,lower=F)}
+    if(alternative=="one.sided"){
+      cvup <- qf(alpha,df1,df2,lower=F)
+      cvlo <- cvlo <- qf(1-alpha,df1,df2,lower=F)}}
+  plot(x, density, type = "l", lwd = 3, main = bquote(bold("Distributions under"~H[0]~"and"~H[1])),xlab=xlab)
+  points(x, density1, type = "l", col = "red", lwd = 3)
+  if(alternative=="one.sided"&&lambda>=1){
+    polygon(c(x[x>=cvup], cvup), c(density[x>=cvup], 0),col = "blue") 
+    abline(v = cvup, col = "blue", lwd = 3)
+    polygon(c(x[x<cvup], cvup), c(density1[x<cvup], 0), density = 15, col = "red")    }
+  if(alternative=="one.sided"&&lambda<1){
+    polygon(c(x[x<=cvlo], cvlo), c(density[x<=cvlo], 0),col = "blue")
+    abline(v = cvlo, col = "blue", lwd = 3)
+    polygon(c(x[x>cvlo], cvlo), c(density1[x>cvlo], 0), density = 15, col = "red")    }
+  if(alternative=="two.sided"){  
+    if(lambda>=1) abline(v = cvup, col = "blue", lwd = 3)
+    if(lambda<1) abline(v = cvlo, col = "blue", lwd = 3)
+    polygon(c(x[x>=cvup], cvup), c(density[x>=cvup], 0),col = "blue") 
+    polygon(c(x[x<=cvlo], cvlo), c(density[x<=cvlo], 0),col = "blue")
+    poly_range <- x > cvlo & x < cvup 
+    polygon(c(cvlo, x[poly_range], cvup), c(0,density1[poly_range], 0), density = 15, col = "red")
+  }
+  abline(h = 0, lwd = 1)
+  legend("topright", legend=c("Type I error", "Type II error"),
+         col=c("blue", "red"), lty=1:2, cex=0.6)
+}
+```
+
+**Group Number:25**
+
+**Student 1 150818822 - Hatice Sena - TEMİZ**
+
+**Student 2 150818821 - İremnur - BOYACI**
+
+**Student 3 150319573 - Mert - HIRKA**
+
+**Student 4 150816043 - Selcan - AKBULUT**
+
+# 3. METHODOLOGY AND APPLICATION
+
+In order to round to four decimal places and disable scientific notation, use the following command:
+
+```{r}
+#To enter the data from drive document to R
+library(readxl)
+url <- "https://docs.google.com/spreadsheets/d/e/2PACX-1vQETcbH5NyQ843pw6444ePjdQeVerp56-AGc0FVvv75WXGcEqM8zdeeQzD7-AajKQ/pub?output=xlsx"
+destfile <- "data_22.xlsx"
+curl::curl_download(url, destfile)
+data_22 <- read_excel(destfile)
+data_22
+old<-options(digits=4,scipen=999)
+
+
+```
+
+***
+## 3.1. Descriptive Statistics
+Descriptive statistics allow summarizing the characteristics of a data set. While making this summary, values such as mean and median are used. Thus, data set features can be better understood and comments about the data set can be made through them.
+\
+\
+```{r 3.1}
+#Write your codes here. Their results will appear after knitting the markdown file.
+```
+\
+You can also add your explanations and comments here.
+
+***
+### 3.1.1. Summary Statistics
+Summary statistics such as mean, median and mode etc. are computed below for every subset of data
+...
+\
+\
+```{r 3.1.1}
+"SUMMARY"
+sapply(data_22,summary,quantile.type=6)
+"MEAN"
+sapply(data_22,mean)
+"MEDIAN"
+sapply(data_22,median)
+"MODE FOR CURRENT EXPENDITURES"
+sort(table(data_22$CE),dec=T)
+"MODE FOR PERSONNEL EXPENDITURES"
+sort(table(data_22$PE),dec=T)
+"MODE FOR OTHER CURRENT EXPENDITURES"
+sort(table(data_22$OCE),dec=T)
+"MODE FOR DEFENCE"
+sort(table(data_22$D),dec=T)
+"MODE FOR GNP"
+sort(table(data_22$GNP),dec=T)
+
+
+"RANGE"
+sapply(data_22,range)
+"VARIANCE"
+sapply(data_22,var)
+"STANDARD DEVIATION"
+sapply(data_22,sd)
+"INTERQUARTILE"
+sapply(data_22,IQR,type=6)
+old<-options(digits=4,scipen=999)
+
+
+
+```
+\
+...
+
+***
+
+### 3.1.2. Frequency Distribution
+Frequency distribution  is computed via using intervals which has equal widths according to range of data. Cumulative and relative frequencies are calculated below for all samples. A Frequency Distribution shows us that the summary data grouping is mutually divided into special classes and the number that occurs in a class. It is a way of expressing disorganized data. In this way, all categories in data 22 are specified with their classes.
+...
+\
+\
+
+```{r 3.1.2}
+#Frequency Distribution for all samples
+n2<-nrow(data_22)
+  k<-ceiling(log(n2,base=2))
+  
+  for(i in 1:5){
+  if(i==1) {x=data_22$CE
+            lab="Current Expenditures"}
+  if(i==2) {x=data_22$PE
+            lab="Personnel Expenditures"}
+  if(i==3) {x=data_22$OCE
+            lab="Other Current Expenditures"}
+  if(i==4) {x=data_22$D
+            lab="Defence"}
+  if(i==5) {x=data_22$GNP
+            lab="GNP"}
+    
+    
+  w<-round(diff(range(x))/k,1)
+  breaks<- seq(w*floor(min(x)/w),w*ceiling(max(x)/w),w)
+  x.cut <- cut(x, breaks,right=F)
+  x.freq <- table(x.cut)
+  x.relfreq <- x.freq / length(x)
+  x.cumfreq <- cumsum(x.freq)
+  x.cumrelfreq <- x.cumfreq / length(x)
+  print(paste("Frequency table for",lab))
+  print(cbind(x.freq, x.relfreq, x.cumfreq,x.cumrelfreq))
+  cat("\n")
+  
+  }
+
+
+```
+\
+...
+
+***
+
+### 3.1.3. Descriptive Plots
+Budget Expenditure data set such as Current Expenditure, Personnel Expenditure etc. is a continuous data type because of price is uncountable. Steam and leaf, dot plot, frequency graph, histogram, time-series plot were used for the data set to visualize the subdata one by one.
+...
+\
+\
+```{r 3.1.3}
+#Descriptive Plots
+ col=c('blue','red2','green2','purple', 'orange')
+
+ for(i in 1:5){
+  if(i==1) {x=data_22$CE
+            lab="Current Expenditures"}
+  if(i==2) {x=data_22$PE
+            lab="Personnel Expenditures"}
+  if(i==3) {x=data_22$OCE
+            lab="Other Current Expenditures"}
+  if(i==4) {x=data_22$D
+            lab="Defence"}
+  if(i==5) {x=data_22$GNP
+            lab="GNP"}
+  
+#Dot diagram
+stripchart(x, xlab="Current Price(YTL)", 
+           main=paste("Dot diagram of",lab),
+           method="stack", 
+           pch=16, 
+           col=col[i])              
+
+points(x=mean(x), y=0.8, pch=17, cex=1.5)                                  
+ 
+abline(h=0.9,col='gray')
+
+text(x=mean(x), y=0.6, labels=bquote(bar(x)*"=" * .(mean(x))))
+
+#Stem-and-leaf diagram
+print(paste("Stem and leaf diagram of",lab))
+stem(x)
+ }
+#Time-Series was plotted.
+plot(x=data_22$BE,
+     y=data_22$CE,
+     xlim=c(1977, 2018),  ## with c()
+     ylim=c(50, 3000000000),  ## with c()
+     log="y", col="blue",xlab = "Years", ylab = "Current Expenditures", main = "Current Expenditures in 1977-2018", type = "o", lwd="3")
+
+
+
+plot(x=data_22$BE,
+     y=data_22$PE,
+     xlim=c(1977, 2018),  ## with c()
+     ylim=c(50, 3000000000),  ## with c()
+     log="y", col="red",xlab = "Years", ylab = "Personnel Expenditures in YTL", main = "Personnel Expenditures in 1977-2018", type = "o", lwd="3")
+
+
+plot(x=data_22$BE,
+     y=data_22$OCE,
+     xlim=c(1977, 2018),  ## with c()
+     ylim=c(50, 3000000000),  ## with c()
+     log="y", col="orange",xlab = "Years", ylab = "Other Current Expenditures in YTL", main = "Other Current Expenditures in 1977-2018", type = "o", lwd="3")
+
+
+
+plot(x=data_22$BE,
+     y=data_22$D,
+     xlim=c(1977, 2018),  ## with c()
+     ylim=c(50, 3000000000),  ## with c()
+     log="y", col="green",xlab = "Years", ylab = "Defence in YTL", main = "Defence in 1977-2018", type = "o", lwd="3")
+
+
+plot(x=data_22$BE,
+     y=data_22$GNP,
+     xlim=c(1977, 2018),  ## with c()
+     ylim=c(50, 90000000000),  ## with c()
+     log="y", col="yellow",xlab = "Years", ylab = "GNP in YTL", main = "GNP in 1977-2018", type = "o", lwd="3")
+
+#Histogram
+
+for(i in 1:5){
+  if(i==1) {x=data_22$CE
+            lab="Current Expenditures"}
+  if(i==2) {x=data_22$PE
+            lab="Personnel Expenditures"}
+  if(i==3) {x=data_22$OCE
+            lab="Other Current Expenditures"}
+  if(i==4) {x=data_22$D
+            lab="Defence"}
+  if(i==5) {x=data_22$GNP
+            lab="GNP"}
+  w<-round(diff(range(x))/k,1)
+  breaks<- seq(w*floor(min(x)/w),w*ceiling(max(x)/w),w)
+  
+  hist(x,breaks,right=F,
+       xlab="Prices ",
+       main=paste("Histogram of",lab))
+  
+  abline(h=seq(0,60,5),col='gray')
+  hist(x,breaks,col=col[i],add=T,right=F)
+}
+
+
+#Box PlotS
+
+BE_list <- (data_22$BE)
+PE_list <- (data_22$PE)
+CE_list <- (data_22$CE)
+OCE_list <- (data_22$OCE)
+D_list <- (data_22$D)
+GNP_list <- (data_22$GNP)
+
+"FOR CURRENT EXPENDITURES"
+boxplot(CE_list,main='Boxplot of Current Expenditures',pch="*",xlab=' in YTL',col='blue',horizontal=T)
+
+
+"FOR PERSONNEL EXPENDITURES"
+boxplot(PE_list,main='Boxplot of Personnel Expenditures',pch="*",xlab='in YTL',col='red',horizontal=T)
+
+
+"FOR OTHER CURRENT EXPENDITURES"
+boxplot(OCE_list,main='Boxplot of Other Current Expenditures',pch="*",xlab='in YTL',col='orange',horizontal=T)
+
+
+"FOR DEFENCE"
+boxplot(D_list,main='Boxplot of Defence ',pch="*",xlab='in YTL',col='green',horizontal=T)
+
+
+"FOR GNP"
+boxplot(GNP_list,main='Boxplot of GNP',pch="*",xlab='in YTL',col='yellow',horizontal=T)
+GNP.out<-boxplot.stats(GNP_list)$out; GNP.out
+text(cex=0.9,y=1.2,x=GNP.out,labels=as.list(GNP.out),srt=90)
+
+
+```
+\
+...
+
+***
+
+## 3.2. Inferential Statistics
+...
+\
+\
+```{r 3.2}
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+
+```
+\
+...
+
+***
+
+### 3.2.1. Confidence Intervals
+Confidence interval estimation (CI) is the range of possible values for the population parameter depends on point estimates such as, sample mean and level of confidence and standard deviation.
+...
+\
+\
+```{r 3.2.1}
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+```
+\
+...
+
+***
+
+#### 3.2.1.1. Confidence Intervals for the Population Mean/Proportion of a Single Sample
+Confidence interval for the population means are calculated based on sample size, mean, and standard deviation of the sample data.
+n>30 sample size is calculated in z test function where variance is unknown and also prediction intervals were calculated to compare the confidence intervals result
+...
+\
+\
+```{r 3.2.1.1}
+
+"FOR CURRENT EXPENDITURES"
+xbar1<-mean(data_22$CE); xbar1
+sd1<-sd(data_22$CE); sd1
+#Find the size of the sample
+n1<-42
+#Since sample size is greater than 42, we can approximately use z-statistic and the sample standard deviation.
+
+#The margin of error is found for the large sample confidence interval as follows:
+E1 <- qnorm(.975)*sd1/sqrt(n1); E1
+#The two-sided large sample confidence bound for mu is:
+xbar1 + c(-E1, E1) 
+
+#Using the z-test function:
+z.test(data_22$CE,alternative="two.sided",sigma.x =sd1,conf.level = 0.95)$conf.int
+
+ci.plot(c('CE_lower', 'CE_upper'),xbar1,c(E1,Inf),c(Inf,E1),'add')
+
+#If we used t-statistic instead of z-statistic, the CI will be found as:
+E12 <- qt(.975,df=n1-1)*sd1/sqrt(n1); E12
+xbar1 + c(-E12, E12) 
+
+#Alternatively, t.test built-in function can be called.
+t.test(data_22$CE,alternative="two.sided", conf.level=0.95)$conf.int
+
+#We can plot both confidence intervals
+ci.plot(c('lower', 'upper'),xbar1,c(E1,E12),c(E1,E12),'add')
+
+#Calculate the 95% prediction interval for a new observation
+P <- qt(.975,df=n1-1)* sd1*sqrt(1+1/n1); P
+
+
+xbar1 + c(-P, P) 
+
+#We can plot both the confidence interval and the prediction interval
+ci.plot(c('CI_CE', 'PI_CE'),xbar1,c(E1, P),c(E1,P),'add')
+"FOR PERSONNEL EXPENDITURES"
+xbar2<-mean(data_22$PE); xbar2
+sd2<-sd(data_22$PE); sd2
+n2<-42
+E2 <- qnorm(.975)*sd2/sqrt(n2); E2
+xbar2 + c(-E2, E2)
+z.test(data_22$PE,alternative="two.sided",sigma.x =sd2,conf.level = 0.95)$conf.int
+ci.plot(c('PE_lower', 'PE_upper'),xbar2,c(E2,Inf),c(Inf,E2),'add')
+#If we used t-statistic instead of z-statistic, the CI will be found as:
+E22 <- qt(.975,df=n2-1)*sd2/sqrt(n2); E22
+xbar2 + c(-E22, E22) 
+t.test(data_22$PE,alternative="two.sided", conf.level=0.95)$conf.int
+
+ci.plot(c('lower', 'upper'),xbar2,c(E2,E22),c(E2,E22),'add')
+
+P <- qt(.975,df=n2-1)* sd2*sqrt(1+1/n2); P
+xbar2 + c(-P, P) 
+ci.plot(c('CI_PE', 'PI_PE'),xbar2,c(E2, P),c(E2,P),'add')
+
+"FOR OTHER CURRENT EXPENDITURES"
+xbar3<-mean(data_22$OCE); xbar3
+sd3<-sd(data_22$OCE); sd3
+n3<-42
+E3 <- qnorm(.975)*sd3/sqrt(n3); E3
+xbar3 + c(-E3, E3)
+z.test(data_22$OCE,alternative="two.sided",sigma.x =sd3,conf.level = 0.95)$conf.int
+ci.plot(c('OCE_lower', 'OCE_upper'),xbar3,c(E3,Inf),c(Inf,E3),'add')
+#If we used t-statistic instead of z-statistic, the CI will be found as:
+E32 <- qt(.975,df=n3-1)*sd3/sqrt(n3); E32
+xbar3 + c(-E32, E32) 
+t.test(data_22$OCE,alternative="two.sided", conf.level=0.95)$conf.int
+
+ci.plot(c('lower', 'upper'),xbar3,c(E3,E32),c(E3,E32),'add')
+
+P <- qt(.975,df=n3-1)* sd3*sqrt(1+1/n3); P
+xbar3 + c(-P, P) 
+ci.plot(c('CI_OCE', 'PI_OCE'),xbar3,c(E3, P),c(E3,P),'add')
+
+"FOR DEFENCE"
+xbar4<-mean(data_22$D); xbar4
+sd4<-sd(data_22$D); sd4
+n4<-42
+E4 <- qnorm(.975)*sd4/sqrt(n4); E4
+xbar4 + c(-E4, E4)
+z.test(data_22$D,alternative="two.sided",sigma.x =sd4,conf.level = 0.95)$conf.int
+ci.plot(c('D_lower', 'D_upper'),xbar4,c(E4,Inf),c(Inf,E4),'add')
+#If we used t-statistic instead of z-statistic, the CI will be found as:
+E42 <- qt(.975,df=n4-1)*sd4/sqrt(n4); E42
+xbar4 + c(-E42, E42) 
+t.test(data_22$D,alternative="two.sided", conf.level=0.95)$conf.int
+
+ci.plot(c('lower', 'upper'),xbar4,c(E4,E42),c(E4,E42),'add')
+
+P <- qt(.975,df=n4-1)* sd4*sqrt(1+1/n4); P
+xbar4 + c(-P, P) 
+ci.plot(c('CI_D', 'PI_D'),xbar4,c(E4, P),c(E4,P),'add')
+
+"FOR GNP"
+xbar5<-mean(data_22$GNP); xbar5
+sd5<-sd(data_22$GNP); sd5
+n5<-42
+E5 <- qnorm(.975)*sd5/sqrt(n5); E5
+xbar5 + c(-E5, E5)
+z.test(data_22$GNP,alternative="two.sided",sigma.x =sd5,conf.level = 0.95)$conf.int
+ci.plot(c('GNP_lower', 'GNP_upper'),xbar5,c(E5,Inf),c(Inf,E5),'add')
+#If we used t-statistic instead of z-statistic, the CI will be found as:
+E52 <- qt(.975,df=n5-1)*sd5/sqrt(n5); E52
+xbar5 + c(-E52, E52) 
+t.test(data_22$GNP,alternative="two.sided", conf.level=0.95)$conf.int
+
+ci.plot(c('lower', 'upper'),xbar5,c(E5,E52),c(E5,E52),'add')
+
+P <- qt(.975,df=n5-1)* sd5*sqrt(1+1/n5); P
+xbar5 + c(-P, P) 
+ci.plot(c('CI_GNP', 'PI_GNP'),xbar5,c(E5, P),c(E5,P),'add')
+
+
+
+
+```
+\
+...
+
+***
+#### 3.2.1.2. Confidence Intervals for the Population Variance of a Single Sample
+Instead of the normally distributed sample calculation, the calculation is made according to the chi square distribution via using sample mean, variance, and standard deviation to find confidence intervals for the population variance. All results were commented in word documents
+...
+\
+\
+```{r 3.2.1.2}
+
+"FOR CURRENT EXPENDITURES"
+#Find sample size, sample mean and sample variance
+n<-length(data_22$CE); n
+xbar<-mean(data_22$CE); xbar 
+var<-var(data_22$CE); var
+sd<- sd(data_22$CE); sd
+#Alternatively, we can use varTest() function from EnvStats package.
+require(EnvStats)
+sigmasqCI<-varTest(data_22$CE, alternative="two.sided",conf.level=0.95,sigma.squared = var)$conf.int; sigmasqCI
+
+sigmaCI<-sqrt(sigmasqCI); sigmaCI
+ci.plot('CE_Var',var,sigmasqCI[1],sigmasqCI[2],'multiply')
+"FOR PERSONNEL EXPENDITURES"
+n1<-length(data_22$PE); n1
+xbar1<-mean(data_22$PE); xbar1 
+var1<-var(data_22$PE); var1
+sd1<- sd(data_22$PE); sd1
+#Alternatively, we can use varTest() function from EnvStats package.
+require(EnvStats)
+sigmasqCI<-varTest(data_22$PE, alternative="two.sided",conf.level=0.95,sigma.squared = var1)$conf.int; sigmasqCI
+
+sigmaCI<-sqrt(sigmasqCI); sigmaCI
+ci.plot('PE_Var',var1,sigmasqCI[1],sigmasqCI[2],'multiply')
+"FOR OTHER CURRENT EXPENDITURES"
+n2<-length(data_22$OCE); n2
+xbar2<-mean(data_22$OCE); xbar2
+var2<-var(data_22$OCE); var2
+sd2<- sd(data_22$OCE); sd2
+require(EnvStats)
+sigmasqCI<-varTest(data_22$OCE, alternative="two.sided",conf.level=0.95,sigma.squared = var2)$conf.int; sigmasqCI
+
+sigmaCI<-sqrt(sigmasqCI); sigmaCI
+ci.plot('OCE_Var',var2,sigmasqCI[1],sigmasqCI[2],'multiply')
+"FOR DEFENCE"
+n3<-length(data_22$D); n3
+xbar3<-mean(data_22$D); xbar3
+var3<-var(data_22$D); var3
+sd3<- sd(data_22$D); sd3
+require(EnvStats)
+sigmasqCI<-varTest(data_22$D, alternative="two.sided",conf.level=0.95,sigma.squared = var3)$conf.int; sigmasqCI
+
+sigmaCI<-sqrt(sigmasqCI); sigmaCI
+ci.plot('D_Var',var3,sigmasqCI[1],sigmasqCI[2],'multiply')
+"FOR GNP"
+n4<-length(data_22$GNP); n4
+xbar4<-mean(data_22$GNP); xbar4
+var4<-var(data_22$GNP); var4
+sd4<- sd(data_22$GNP); sd4
+require(EnvStats)
+sigmasqCI<-varTest(data_22$GNP, alternative="two.sided",conf.level=0.95,sigma.squared = var4)$conf.int; sigmasqCI
+
+sigmaCI<-sqrt(sigmasqCI); sigmaCI
+ci.plot('GNP_Var',var4,sigmasqCI[1],sigmasqCI[2],'multiply')
+
+
+```
+\
+...
+
+***
+
+#### 3.2.1.3. Confidence Intervals for the Difference of Population Means/Proportions of Two Samples
+Since, population standard deviation is unknown and  our sample size is 42, z test was applied for calculating confidence intervals for difference of population mean of two sample data.
+...
+\
+\
+```{r 3.2.1.3}
+"FOR  PERSONNEL EXPENDITURES and OTHER CURRENT EXPENDITURES CONFIDENCE INTERVAL ON MEANS"
+#Samples size, samples mean and standard deviation of samples was called.
+n10<- length(data_22$PE) ; n10
+n11<- length(data_22$OCE) ;n11
+xbar10<-mean(data_22$PE);  xbar10
+xbar11<- mean(data_22$OCE);  xbar11
+sd10<-sd(data_22$PE); sd10
+sd11<-sd(data_22$OCE); sd11
+
+#zsum.test() function from the BSDA package was used. Since sample size is greater than 30 , we can approximately use z-statistic and then  the 95% CI was found.
+
+zsum.test(xbar10, sd10, n10, xbar11, sd11, n11, alternative="two.sided", conf.level=0.95)
+
+#The standard error of the difference in means was calculated.
+sed10<-sqrt(sd10^2/n10+sd11^2/n11); sed10
+
+# zalpha/2 was multiplied with the standard error of the difference in means and the margin of error was obtained.
+E10 <- qnorm(.95)*sed10; E10 
+
+#The difference of sample means was added and so,the confidence interval was found.
+xbar10-xbar11 + c(-E10, E10) 
+
+#Then confidence intervals was plotted for both.
+ci.plot("Personnel Expenditures and Other Current Expenditures",xbar10-xbar11,E10,E10,'add')
+
+
+"FOR  PERSONNEL EXPENDITURES and DEFENCE CONFIDENCE INTERVALS ON MEANS"
+#Samples size, samples mean and standard deviation of samples was called.
+n12<- length(data_22$PE) ; n12
+n13<- length(data_22$D) ;n13
+xbar12<-mean(data_22$PE);  xbar12
+xbar13<- mean(data_22$D);  xbar13
+sd12<-sd(data_22$PE); sd12
+sd13<-sd(data_22$D); sd13
+
+#zsum.test() function from the BSDA package was used. Since sample size is greater than 30 , we can approximately use z-statistic and then  the 95% CI was found.
+zsum.test(xbar12, sd12, n12, xbar13, sd13, n13, alternative="two.sided", conf.level=0.95)
+
+#The standard error of the difference in means was calculated.
+sed11<-sqrt(sd12^2/n12+sd13^2/n13); sed11
+
+# zalpha/2 was multiplied with the standard error of the difference in means and the margin of error was obtained.
+E11 <- qnorm(.95)*sed11; E11 
+
+#The difference of sample means was added and so,the confidence interval was found.
+xbar12-xbar13 + c(-E11, E11) 
+
+#Then confidence intervals was plotted for both.
+ci.plot("Personnel Expenditures and Defence",xbar12-xbar13,E11,E11,'add')
+
+
+"FOR  OTHER CURRENT EXPENDITURES and DEFENCE CONFIDENCE INTERVALS ON MEANS"
+#Samples size, samples mean and standard deviation of samples was called.
+n14<- length(data_22$OCE) ; n14
+n15<- length(data_22$D) ;n15
+xbar14<-mean(data_22$OCE);  xbar14
+xbar15<- mean(data_22$D);  xbar15
+sd14<-sd(data_22$OCE); sd14
+sd15<-sd(data_22$D); sd15
+
+#zsum.test() function from the BSDA package was used. Since sample size is greater than 30 , we can approximately use z-statistic and then  the 95% CI was found.
+zsum.test(xbar14, sd14, n14, xbar15, sd15, n15, alternative="two.sided", conf.level=0.95)
+
+#The standard error of the difference in means was calculated.
+sed12<-sqrt(sd14^2/n14+sd15^2/n15); sed12
+
+# zalpha/2 was multiplied with the standard error of the difference in means and the margin of error was obtained.
+E12 <- qnorm(.95)*sed12; E12 
+
+#The difference of sample means was added and so,the confidence interval was found.
+xbar14-xbar15 + c(-E12, E12) 
+
+#Then confidence intervals was plotted for both.
+ci.plot("Other Current Expenditures and Defence",xbar14-xbar15,E12,E12,'add')
+
+
+"FOR CURRENT EXPENDITURES and DEFENCE CONFIDENCE INTERVALS ON MEANS"
+#Samples size, samples mean and standard deviation of samples was called.
+n16<- length(data_22$CE) ; n16
+n17<- length(data_22$D) ;n17
+xbar16<-mean(data_22$CE);  xbar16
+xbar17<- mean(data_22$D);  xbar17
+sd16<-sd(data_22$CE); sd16
+sd17<-sd(data_22$D); sd17
+
+#zsum.test() function from the BSDA package was used. Since sample size is greater than 30 , we can approximately use z-statistic and then  the 95% CI was found.
+zsum.test(xbar16, sd16, n16, xbar17, sd17, n17, alternative="two.sided", conf.level=0.95)
+
+#The standard error of the difference in means was calculated.
+sed13<-sqrt(sd16^2/n16+sd17^2/n17); sed13
+
+# zalpha/2 was multiplied with the standard error of the difference in means and the margin of error was obtained.
+E13 <- qnorm(.95)*sed13; E13 
+
+#The difference of sample means was added and so,the confidence interval was found.
+xbar16-xbar17 + c(-E13, E13) 
+
+#Then confidence intervals was plotted for both.
+ci.plot("Current Expenditures and Defence",xbar16-xbar17,E13,E13,'add')
+
+```
+\
+...
+
+***
+#### 3.2.1.4. Confidence Intervals for the Ratio of Population Variances of Two Samples
+F test is applied for determining calculating confidence intervals. CI are calculated according to population variances of two samples.
+...
+\
+\
+```{r 3.2.1.4}
+"FOR  PERSONNEL EXPENDITURES and OTHER CURRENT EXPENDITURES CONFIDENCE INTERVALS ON VARIANCES "
+#Samples size and standard deviation of samples was called.
+n1<-length(data_22$PE)
+n2<-length(data_22$OCE)
+sd1<-sd(data_22$PE);sd1
+sd2<-sd(data_22$OCE);sd2
+
+#Since, we have two variances,F statistic was used.Then 95% CI was calculated for the two population variances.
+fclo <- qf(0.975,n2-1,n1-1,lower=F); fclo
+fcup <- qf(0.025,n2-1,n1-1,lower=F); fcup
+sigmasqCI <-(sd1/sd2)^2*c(fclo,fcup); sigmasqCI
+
+
+#Confidence interval was plotted.
+ci.plot('Personnel Expenditures and Other Current Expenditures_Var',(sd1/sd2)^2,sigmasqCI[1],sigmasqCI[2],'multiply')
+
+
+"FOR  PERSONNEL EXPENDITURES and DEFENCE CONFIDENCE INTERVALS ON VARIANCES " 
+#Samples size and standard deviation of samples was called.
+n3<-length(data_22$PE);n3
+n4<-length(data_22$D);n4
+sd3<-sd(data_22$PE);sd3
+sd4<-sd(data_22$D);sd4
+
+#Since, we have two variances,F statistic was used.Then 95% CI was calculated for the two population variances.
+fclo <- qf(0.975,n4-1,n3-1,lower=F); fclo
+fcup <- qf(0.025,n4-1,n3-1,lower=F); fcup
+sigmasqCI <-(sd3/sd4)^2*c(fclo,fcup); sigmasqCI
+
+
+#Confidence interval was plotted.
+ci.plot('Personnel Expenditures and Defence _Var',(sd3/sd4)^2,sigmasqCI[1],sigmasqCI[2],'multiply')
+
+
+"FOR OTHER CURRENT EXPENDITURES and DEFENCE CONFIDENCE INTERVALS ON VARIANCES " 
+#Samples size and standard deviation of samples was called.
+n5<-length(data_22$OCE);n5
+n6<-length(data_22$D);n6
+sd5<-sd(data_22$OCE);sd5
+sd6<-sd(data_22$D);sd6
+
+#Since, we have two variances,F statistic was used.Then 95% CI was calculated for the two population variances.
+fclo <- qf(0.975,n6-1,n5-1,lower=F); fclo
+fcup <- qf(0.025,n6-1,n5-1,lower=F); fcup
+sigmasqCI <-(sd5/sd6)^2*c(fclo,fcup); sigmasqCI
+
+
+#Confidence interval was plotted.
+ci.plot('Other Current Expenditures and Defence _Var',(sd5/sd6)^2,sigmasqCI[1],sigmasqCI[2],'multiply')
+
+
+"FOR CURRENT EXPENDITURES and DEFENCE CONFIDENCE INTERVALS ON VARIANCES " 
+#Samples size and standard deviation of samples was called.
+n7<-length(data_22$CE);n7
+n8<-length(data_22$D);n8
+sd7<-sd(data_22$CE);sd7
+sd8<-sd(data_22$D);sd8
+
+#Since, we have two variances,F statistic was used.Then 95% CI was calculated for the two population variances.
+fclo <- qf(0.975,n8-1,n7-1,lower=F); fclo
+fcup <- qf(0.025,n8-1,n7-1,lower=F); fcup
+sigmasqCI <-(sd7/sd8)^2*c(fclo,fcup); sigmasqCI
+
+
+#Confidence interval was plotted.
+ci.plot('Current Expenditures and Defence _Var',(sd7/sd8)^2,sigmasqCI[1],sigmasqCI[2],'multiply')
+
+
+
+
+```
+\
+...
+
+***
+
+### 3.2.2. Hypothesis Tests
+Hypothesis testing is the method used to determine the accuracy of a hypothesis within a statistical reliability range. To test hypothesis made about population parameters, sample statistics was used.
+...
+\
+\
+```{r 3.2.2}
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+```
+\
+...
+
+***
+
+#### 3.2.2.1. Hypothesis Tests on the Population Mean/Proportion of a Single Sample
+Z test is applied to conduct hypothesis test, since n>30 and sample standard deviation is known.Hypothesized values were determined and also beta tests were conducted the measure the power and judgment of the decision
+...
+\
+\
+```{r 3.2.2.1}
+#Write your codes here. Their results will appear after knitting the markdown file.
+"FOR CURRENT EXPENDITURES"
+#We want to test the null hypothesis H0: mu=500000000 against the less-than one sided alternative using critical value approach
+#Define problem data
+n<-42       #sample size
+mu0<-500000000 #hypothesized value
+sigma<-sd(data_22$CE)    #population standard deviation
+xbar<-mean(data_22$CE)    #sample mean
+alpha<-0.05   #significance level
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(alpha); zc
+#Calculate the test statistic Z0:
+z0<-(xbar-mu0)/(sigma/sqrt(n)); z0
+#Use our test.critical function to give the decision
+testmean.cv(zc,z0,mu0,alpha,alt="less",theta="mu")
+###We want to test the null hypothesis H0: mu=500000000 against the less-than one sided alternative using p-value approach
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(mean.x=xbar, sigma.x=sigma, n.x=n, alt='less', mu=mu0,conf.level=0.95)
+#For manual calculation, calculate the p-value
+pval<-pnorm(z0); pval
+#Use our test.pval function to give the decision
+test.pval(pval,mu0,alpha,theta="mu")
+#Use our plotmean.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z0,zc,n,type='z',alt='less')
+ "TEST FOR CURRENT EXPENDITURES"
+#Define true parameter value and delta, and calculate power of the test with pwr.norm.test function: 
+mu01 <- 480000000
+delta <- mu01-mu0; delta
+pwrNorm <- pwr.norm.test(delta/sigma,n,alpha,power=NULL,alt='less'); pwrNorm
+beta <- 1-pwrNorm$power; beta
+power <- 1-beta; power
+plotmean.beta(sigma,zc,delta,n,type='z',alt='less')
+
+"FOR PERSONNEL EXPENDITURES"
+#We want to test the null hypothesis H0: mu=400000000.0 against the less-than one sided alternative using critical value approach
+#Define problem data
+n<-42       #sample size
+mu1<-400000000.0 #hypothesized value
+sigma1<-sd(data_22$PE)    #population standard deviation
+xbar1<-mean(data_22$PE)    #sample mean
+alpha<-0.05   #significance level
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(alpha); zc
+#Calculate the test statistic Z0:
+z1<-(xbar1-mu1)/(sigma1/sqrt(n)); z1
+#Use our test.critical function to give the decision
+testmean.cv(zc,z1,mu1,alpha,alt="less",theta="mu")
+###We want to test the null hypothesis H0: mu=400000000.0 against the less-than one sided alternative using p-value approach
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(mean.x=xbar1, sigma.x=sigma1, n.x=n, alt='less', mu=mu1,conf.level=0.95)
+#For manual calculation, calculate the p-value
+pval1<-pnorm(z1); pval1
+#Use our test.pval function to give the decision
+test.pval(pval1,mu1,alpha,theta="mu")
+#Use our plotmean.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z1,zc,n,type='z',alt='less')
+
+"TEST FOR PERSONNEL EXPENDITURES"
+#Define true parameter value and delta, and calculate power of the test with pwr.norm.test function: 
+mu02 <- 380000000.0
+delta1 <- mu02-mu1; delta1
+pwrNorm1 <- pwr.norm.test(delta1/sigma1,n,alpha,power=NULL,alt='less'); pwrNorm1
+beta1 <- 1-pwrNorm1$power; beta1
+power1 <- 1-beta1; power1
+plotmean.beta(sigma1,zc,delta1,n,type='z',alt='less')
+
+"FOR OTHER CURRENT EXPENDITURES"
+#We want to test the null hypothesis H0: mu=80000000.0 against the less-than one sided alternative using critical value approach
+#Define problem data
+n<-42       #sample size
+mu2<-80000000.0 #hypothesized value
+sigma2<-sd(data_22$OCE)    #population standard deviation
+xbar2<-mean(data_22$OCE)    #sample mean
+alpha<-0.05   #significance level
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(alpha); zc
+#Calculate the test statistic Z0:
+z2<-(xbar2-mu2)/(sigma2/sqrt(n)); z2
+#Use our test.critical function to give the decision
+testmean.cv(zc,z2,mu2,alpha,alt="less",theta="mu")
+###We want to test the null hypothesis H0: mu=80000000.0 against the less-than one sided alternative using p-value approach
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(mean.x=xbar2, sigma.x=sigma2, n.x=n, alt='less', mu=mu2,conf.level=0.95)
+#For manual calculation, calculate the p-value
+pval2<-pnorm(z2); pval2
+#Use our test.pval function to give the decision
+test.pval(pval2,mu2,alpha,theta="mu")
+#Use our plotmean.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z2,zc,n,type='z',alt='less')
+
+"TEST FOR OTHER CURRENT EXPENDITURES"
+#Define true parameter value and delta, and calculate power of the test with pwr.norm.test function: 
+mu03 <- 76000000.0
+delta2 <- mu03-mu2; delta2
+pwrNorm2 <- pwr.norm.test(delta2/sigma2,n,alpha,power=NULL,alt='less'); pwrNorm2
+beta2 <- 1-pwrNorm2$power; beta2
+power2 <- 1-beta2; power2
+plotmean.beta(sigma2,zc,delta2,n,type='z',alt='less')
+
+"FOR DEFENCE"
+#We want to test the null hypothesis H0: mu=70000000.0 against the less-than one sided alternative using critical value approach
+#Define problem data
+n<-42       #sample size
+mu3<-70000000.0 #hypothesized value
+sigma3<-sd(data_22$D)    #population standard deviation
+xbar3<-mean(data_22$D)    #sample mean
+alpha<-0.05   #significance level
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(alpha); zc
+#Calculate the test statistic Z0:
+z3<-(xbar3-mu3)/(sigma3/sqrt(n)); z3
+#Use our test.critical function to give the decision
+testmean.cv(zc,z3,mu3,alpha,alt="less",theta="mu")
+###We want to test the null hypothesis H0: mu=70000000.0 against the less-than one sided alternative using p-value approach
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(mean.x=xbar3, sigma.x=sigma3, n.x=n, alt='less', mu=mu3,conf.level=0.95)
+#For manual calculation, calculate the p-value
+pval3<-pnorm(z3); pval3
+#Use our test.pval function to give the decision
+test.pval(pval3,mu3,alpha,theta="mu")
+#Use our plotmean.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z3,zc,n,type='z',alt='less')
+
+"TEST FOR DEFENCE"
+#Define true parameter value and delta, and calculate power of the test with pwr.norm.test function: 
+mu04 <- 69000000.0
+delta3 <- mu04-mu3; delta3
+pwrNorm3 <- pwr.norm.test(delta3/sigma3,n,alpha,power=NULL,alt='less'); pwrNorm3
+beta3 <- 1-pwrNorm3$power; beta3
+power3 <- 1-beta3; power3
+plotmean.beta(sigma3,zc,delta3,n,type='z',alt='less')
+"FOR GNP"
+#We want to test the null hypothesis H0: mu=3000000000 against the less-than one sided alternative using critical value approach
+#Define problem data
+n<-42       #sample size
+mu4<-3000000000 #hypothesized value
+sigma4<-sd(data_22$GNP)    #population standard deviation
+xbar4<-mean(data_22$GNP)    #sample mean
+alpha<-0.05   #significance level
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(alpha); zc
+#Calculate the test statistic Z0:
+z4<-(xbar4-mu4)/(sigma4/sqrt(n)); z4
+#Use our test.critical function to give the decision
+testmean.cv(zc,z4,mu4,alpha,alt="less",theta="mu")
+###We want to test the null hypothesis H0: mu=3000000000 against the less-than one sided alternative using p-value approach
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(mean.x=xbar4, sigma.x=sigma4, n.x=n, alt='less', mu=mu4,conf.level=0.95)
+#For manual calculation, calculate the p-value
+pval4<-pnorm(z4); pval4
+#Use our test.pval function to give the decision
+test.pval(pval4,mu4,alpha,theta="mu")
+#Use our plotmean.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z4,zc,n,type='z',alt='less')
+
+"TEST FOR GNP"
+#Define true parameter value and delta, and calculate power of the test with pwr.norm.test function: 
+mu05 <- 2900000000
+delta4 <- mu05-mu4; delta4
+pwrNorm4 <- pwr.norm.test(delta4/sigma4,n,alpha,power=NULL,alt='less'); pwrNorm4
+beta4 <- 1-pwrNorm4$power; beta4
+power4 <- 1-beta4; power4
+plotmean.beta(sigma4,zc,delta4,n,type='z',alt='less')
+
+
+```
+\
+...
+
+***
+
+#### 3.2.2.2. Hypothesis Tests on the Population Variance of a Single Sample
+Chi-squared test is used to conduct Hypothesis Tests. It is a method used to test whether the expected frequencies are actually the same as the expected frequency. 
+...
+\
+\
+```{r 3.2.2.2}
+#Write your codes here. Their results will appear after knitting the markdown file.
+"FOR CURRENT EXPENDITURES"
+#In order to test the null hypothesis H0: sigma^2=450000000000000000 against the one-sided (greater) alternative using critical value approach
+n<-42                       #sample size
+var7<-var(data_22$CE);var7       #sample variance
+sigmasq7<-450000000000000000          #hypothesized value
+alpha<-0.05                            #significance level
+
+#The critical values at 0.05 significance level was calculated
+chisqc7<-qchisq(1-alpha,df=n-1); chisqc7
+#Also,the critical value by setting lower=FALSE is calculated becaues we the upper tail is needed.
+chisqc7<-qchisq(alpha,df=n-1,lower=F); chisqc7
+
+#Then,the test statistic was calculated:
+chisq7<-(n-1)*var7/sigmasq7; chisq7
+
+#The test statistic with the critical values was compared and then a decision was made.
+testvar.cv(cvup=chisqc7,cvlo=NULL,chisq7,sigmasq7,alpha,alt="g")
+
+# The p-value approach was done in order to test the null hypothesis H0: sigma^2=450000000000000000 against the one-sided (greater) alternative
+pval7<-1-pchisq(chisq7,df=n-1); pval7
+pval7<-pchisq(chisq7,df=n-1,lower=F); pval7
+
+#P-value with the significance level was compared and then a decision was made.
+test.pval(pval7,sigmasq7,alpha,theta="sigma^2")
+
+# plotvar.hypothesis function was used in order to plot the hypothesis test.
+plotvar.hypothesis(chisq7,alpha,n-1,type='chisq',alt='g')
+
+
+"FOR PERSONNEL EXPENDITURES"
+#In order to test the null hypothesis H0: sigma^2=350000000000000000 against the one-sided (greater) alternative using critical value approach
+n<-42                       #sample size
+var8<-var(data_22$PE);var8       #sample variance
+sigmasq8<-350000000000000000          #hypothesized value
+alpha<-0.05                            #significance level
+
+#The critical values at 0.05 significance level was calculated
+chisqc8<-qchisq(1-alpha,df=n-1); chisqc8
+#Also,the critical value by setting lower=FALSE is calculated becaues we the upper tail is needed.
+chisqc8<-qchisq(alpha,df=n-1,lower=F); chisqc8
+
+#Then,the test statistic was calculated:
+chisq8<-(n-1)*var8/sigmasq8; chisq8
+
+#The test statistic with the critical values was compared and then a decision was made.
+testvar.cv(cvup=chisqc8,cvlo=NULL,chisq8,sigmasq8,alpha,alt="g")
+
+# The p-value approach was done in order to test the null hypothesis H0: sigma^2=450000000000000000 against the one-sided (greater) alternative
+pval8<-1-pchisq(chisq8,df=n-1); pval8
+pval8<-pchisq(chisq8,df=n-1,lower=F); pval8
+
+#P-value with the significance level was compared and then a decision was made.
+test.pval(pval8,sigmasq8,alpha,theta="sigma^2")
+
+# plotvar.hypothesis function was used in order to plot the hypothesis test.
+plotvar.hypothesis(chisq8,alpha,n-1,type='chisq',alt='g')
+
+
+"FOR OTHER CURRENT EXPENDITURES"
+#In order to test the null hypothesis H0: sigma^2=12000000000000000 against the one-sided (greater) alternative using critical value approach
+n<-42                       #sample size
+var9<-var(data_22$OCE);var9       #sample variance
+sigmasq9<-12000000000000000         #hypothesized value
+alpha<-0.05                            #significance level
+
+#The critical values at 0.05 significance level was calculated
+chisqc9<-qchisq(1-alpha,df=n-1); chisqc9
+#Also,the critical value by setting lower=FALSE is calculated becaues we the upper tail is needed.
+chisqc9<-qchisq(alpha,df=n-1,lower=F); chisqc9
+
+#Then,the test statistic was calculated:
+chisq9<-(n-1)*var9/sigmasq9; chisq9
+
+#The test statistic with the critical values was compared and then a decision was made.
+testvar.cv(cvup=chisqc9,cvlo=NULL,chisq9,sigmasq9,alpha,alt="g")
+
+# The p-value approach was done in order to test the null hypothesis H0: sigma^2=12000000000000000 against the one-sided (greater) alternative
+pval9<-1-pchisq(chisq9,df=n-1); pval9
+pval9<-pchisq(chisq9,df=n-1,lower=F); pval9
+
+#P-value with the significance level was compared and then a decision was made.
+test.pval(pval9,sigmasq9,alpha,theta="sigma^2")
+
+# plotvar.hypothesis function was used in order to plot the hypothesis test.
+plotvar.hypothesis(chisq9,alpha,n-1,type='chisq',alt='g')
+
+"FOR DEFENCE"
+#In order to test the null hypothesis H0: sigma^2=8500000000000000 against the one-sided (greater) alternative using critical value approach
+n<-42                       #sample size
+var10<-var(data_22$D);var10       #sample variance
+sigmasq10<-8500000000000000         #hypothesized value
+alpha<-0.05                            #significance level
+
+#The critical values at 0.05 significance level was calculated
+chisqc10<-qchisq(1-alpha,df=n-1); chisqc10
+#Also,the critical value by setting lower=FALSE is calculated becaues we the upper tail is needed.
+chisqc10<-qchisq(alpha,df=n-1,lower=F); chisqc10
+
+#Then,the test statistic was calculated:
+chisq10<-(n-1)*var10/sigmasq10; chisq10
+
+#The test statistic with the critical values was compared and then a decision was made.
+testvar.cv(cvup=chisqc10,cvlo=NULL,chisq10,sigmasq10,alpha,alt="g")
+
+# The p-value approach was done in order to test the null hypothesis H0: sigma^2=8500000000000000 against the one-sided (greater) alternative
+pval10<-1-pchisq(chisq10,df=n-1); pval10
+pval10<-pchisq(chisq10,df=n-1,lower=F); pval10
+
+#P-value with the significance level was compared and then a decision was made.
+test.pval(pval10,sigmasq10,alpha,theta="sigma^2")
+
+# plotvar.hypothesis function was used in order to plot the hypothesis test.
+plotvar.hypothesis(chisq10,alpha,n-1,type='chisq',alt='g')
+
+"FOR GNP"
+#In order to test the null hypothesis H0: sigma^2=21000000000000000000 against the one-sided (greater) alternative using critical value approach
+n<-42                       #sample size
+var11<-var(data_22$GNP);var11       #sample variance
+sigmasq11<-21000000000000000000        #hypothesized value
+alpha<-0.05                            #significance level
+
+#The critical values at 0.05 significance level was calculated
+chisqc11<-qchisq(1-alpha,df=n-1); chisqc11
+#Also,the critical value by setting lower=FALSE is calculated becaues we the upper tailis needed.
+chisqc11<-qchisq(alpha,df=n-1,lower=F); chisqc11
+
+#Then,the test statistic was calculated:
+chisq11<-(n-1)*var11/sigmasq11; chisq11
+
+#The test statistic with the critical values was compared and then a decision was made.
+testvar.cv(cvup=chisqc10,cvlo=NULL,chisq11,sigmasq11,alpha,alt="g")
+
+# The p-value approach was done in order to test the null hypothesis H0: sigma^2=21000000000000000000 against the one-sided (greater) alternative
+pval11<-1-pchisq(chisq11,df=n-1); pval11
+pval11<-pchisq(chisq11,df=n-1,lower=F); pval11
+
+#P-value with the significance level was compared and then a decision was made.
+test.pval(pval11,sigmasq11,alpha,theta="sigma^2")
+
+# plotvar.hypothesis function was used in order to plot the hypothesis test.
+plotvar.hypothesis(chisq11,alpha,n-1,type='chisq',alt='g')
+
+```
+\
+...
+
+***
+#### 3.2.2.3. Hypothesis Tests on the Difference of Population Means/Proportions of Two Samples
+Difference between population means is determined, population standard deviation is unknown and n>=30 so z test is applied for hypothesis tests.
+...
+\
+\
+```{r 3.2.2.3}
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+"FOR PERSONNEL EXPENDITURES AND OTHER CURRENT EXPENDITURES"
+#We want to test the null hypothesis H0: mu1-mu2=0 against the greater than one-sided alternative using critical value approach
+#Define problem data
+n1<-42         #sample size from population 1
+n2<-42         #sample size from population 2
+delta0<-0      #hypothesized value
+sigma1<-sd(data_22$PE)      #sample 1 standard deviation
+sigma2<-sd(data_22$OCE)      #sample 2 standard deviation
+xbar18<- mean(data_22$PE)     #sample mean from population 1
+xbar19<-mean(data_22$OCE)     #sample mean from population 2
+alpha<-0.05    #significance level
+
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(xbar18, sigma1, n1, xbar19, sigma2, n2, alt='g', conf.level=0.95)
+
+#For manual calculation, calculate the standard error of the difference in means
+sed<-sqrt(sigma1^2/n1+sigma2^2/n2);sed
+
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(1-alpha); zc
+
+#Calculate the test statistic Z0 and use our testmean.cv function to give the decision:
+z0<-(xbar18-xbar19-delta0)/sed; z0
+testmean.cv(zc,z0,delta0,alpha,alt="g",theta="mu1-mu2")
+
+#Calculate the p-value and use our test.pval function to give the decision:
+pval<-(1-pnorm(z0)); pval
+test.pval(pval,delta0,alpha,theta="mu1-mu2")
+
+#Use the plot.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z0,zc,type='z',alt='g')
+
+#Define true difference in population means, and compute the power of the test with pwr.norm.test function:
+delta<-(xbar18-xbar19)
+d<-(delta-delta0)/sqrt(sigma1^2+sigma2^2)
+pwr.norm.test(d,n1,0.05,alt='g')
+
+#We can also compute the type II error and power of the test manually:
+beta <- pnorm(zc-((delta-delta0)/sed)); beta
+power<-1-beta; power
+
+#We can use our plotbeta function with the required parameters:
+plotmean.beta(sed,zc,delta,n=1,type='z',alt='g')
+
+#In the second part, we need to determine the required sample size
+#Again, we can use the pwr.norm.test function as seen below:
+pwr.norm.test(d,n=NULL,0.05,power=0.90,alt='g')
+
+#We can calculate the required sample size also manually. 
+#The parameters beta and zbeta are determined.
+beta2 <- 0.10
+zbeta <-qnorm(1-beta2); zbeta
+
+#The required sample size is calculated.
+nreq<-((zc+zbeta)/d)^2; nreq
+ceiling(nreq)
+
+"FOR PERSONNEL EXPENDITURES AND DEFENCE"
+#We want to test the null hypothesis H0: mu1-mu2=0 against the greater than one-sided alternative using critical value approach
+#Define problem data
+n1<-42         #sample size from population 1
+n2<-42         #sample size from population 2
+delta0<-0      #hypothesized value
+sigma1<-sd(data_22$PE)      #sample 1 standard deviation
+sigma2<-sd(data_22$D)      #sample 2 standard deviation
+xbar20<- mean(data_22$PE)     #sample mean from population 1
+xbar21<-mean(data_22$D)     #sample mean from population 2
+alpha<-0.05    #significance level
+
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(xbar20, sigma1, n1, xbar21, sigma2, n2, alt='g', conf.level=0.95)
+
+#For manual calculation, calculate the standard error of the difference in means
+sed<-sqrt(sigma1^2/n1+sigma2^2/n2);sed
+
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(1-alpha); zc
+
+#Calculate the test statistic Z0 and use our testmean.cv function to give the decision:
+z0<-(xbar20-xbar21-delta0)/sed; z0
+testmean.cv(zc,z0,delta0,alpha,alt="g",theta="mu1-mu2")
+
+#Calculate the p-value and use our test.pval function to give the decision:
+pval<-(1-pnorm(z0)); pval
+test.pval(pval,delta0,alpha,theta="mu1-mu2")
+
+#Use the plot.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z0,zc,type='z',alt='g')
+
+#Define true difference in population means, and compute the power of the test with pwr.norm.test function:
+delta<-(xbar20-xbar21)
+d<-(delta-delta0)/sqrt(sigma1^2+sigma2^2)
+pwr.norm.test(d,n1,0.05,alt='g')
+
+#We can also compute the type II error and power of the test manually:
+beta <- pnorm(zc-((delta-delta0)/sed)); beta
+power<-1-beta; power
+
+#We can use our plotbeta function with the required parameters:
+plotmean.beta(sed,zc,delta,n=1,type='z',alt='g')
+
+#In the second part, we need to determine the required sample size
+#Again, we can use the pwr.norm.test function as seen below:
+pwr.norm.test(d,n=NULL,0.05,power=0.90,alt='g')
+
+#We can calculate the required sample size also manually. 
+#The parameters beta and zbeta are determined.
+beta2 <- 0.10
+zbeta <-qnorm(1-beta2); zbeta
+
+#The required sample size is calculated.
+nreq<-((zc+zbeta)/d)^2; nreq
+ceiling(nreq)
+
+"FOR OTHER CURRENT EXPENDITURES AND DEFENCE"
+#We want to test the null hypothesis H0: mu1-mu2=0 against the greater than one-sided alternative using critical value approach
+#Define problem data
+n1<-42         #sample size from population 1
+n2<-42         #sample size from population 2
+delta0<-0      #hypothesized value
+sigma1<-sd(data_22$OCE)      #sample 1 standard deviation
+sigma2<-sd(data_22$D)      #sample 2 standard deviation
+xbar22<- mean(data_22$OCE)     #sample mean from population 1
+xbar23<-mean(data_22$D)     #sample mean from population 2
+alpha<-0.05    #significance level
+
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(xbar22, sigma1, n1, xbar23, sigma2, n2, alt='g', conf.level=0.95)
+
+#For manual calculation, calculate the standard error of the difference in means
+sed<-sqrt(sigma1^2/n1+sigma2^2/n2);sed
+
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(1-alpha); zc
+
+#Calculate the test statistic Z0 and use our testmean.cv function to give the decision:
+z0<-(xbar22-xbar23-delta0)/sed; z0
+testmean.cv(zc,z0,delta0,alpha,alt="g",theta="mu1-mu2")
+
+#Calculate the p-value and use our test.pval function to give the decision:
+pval<-(1-pnorm(z0)); pval
+test.pval(pval,delta0,alpha,theta="mu1-mu2")
+
+#Use the plot.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z0,zc,type='z',alt='g')
+
+#Define true difference in population means, and compute the power of the test with pwr.norm.test function:
+delta<-(xbar22-xbar23)
+d<-(delta-delta0)/sqrt(sigma1^2+sigma2^2)
+pwr.norm.test(d,n1,0.05,alt='g')
+
+#We can also compute the type II error and power of the test manually:
+beta <- pnorm(zc-((delta-delta0)/sed)); beta
+power<-1-beta; power
+
+#We can use our plotbeta function with the required parameters:
+plotmean.beta(sed,zc,delta,n=1,type='z',alt='g')
+
+#In the second part, we need to determine the required sample size
+#Again, we can use the pwr.norm.test function as seen below:
+pwr.norm.test(d,n=NULL,0.05,power=0.90,alt='g')
+
+#We can calculate the required sample size also manually. 
+#The parameters beta and zbeta are determined.
+beta2 <- 0.10
+zbeta <-qnorm(1-beta2); zbeta
+
+#The required sample size is calculated.
+nreq<-((zc+zbeta)/d)^2; nreq
+ceiling(nreq)
+
+"FOR CURRENT EXPENDITURES AND DEFENCE"
+#We want to test the null hypothesis H0: mu1-mu2=0 against the greater than one-sided alternative using critical value approach
+#Define problem data
+n1<-42         #sample size from population 1
+n2<-42         #sample size from population 2
+delta0<-0      #hypothesized value
+sigma1<-sd(data_22$CE)      #sample 1 standard deviation
+sigma2<-sd(data_22$D)      #sample 2 standard deviation
+xbar24<- mean(data_22$CE)     #sample mean from population 1
+xbar25<-mean(data_22$D)     #sample mean from population 2
+alpha<-0.05    #significance level
+
+#We can use the zsum.test() function from the BSDA package to test the null hypothesis.
+zsum.test(xbar24, sigma1, n1, xbar25, sigma2, n2, alt='g', conf.level=0.95)
+
+#For manual calculation, calculate the standard error of the difference in means
+sed<-sqrt(sigma1^2/n1+sigma2^2/n2);sed
+
+#Calculate the critical value at 0.05 significance level
+zc<-qnorm(1-alpha); zc
+
+#Calculate the test statistic Z0 and use our testmean.cv function to give the decision:
+z0<-(xbar24-xbar25-delta0)/sed; z0
+testmean.cv(zc,z0,delta0,alpha,alt="g",theta="mu1-mu2")
+
+#Calculate the p-value and use our test.pval function to give the decision:
+pval<-(1-pnorm(z0)); pval
+test.pval(pval,delta0,alpha,theta="mu1-mu2")
+
+#Use the plot.hypothesis function to plot the hypothesis test
+plotmean.hypothesis(z0,zc,type='z',alt='g')
+
+#Define true difference in population means, and compute the power of the test with pwr.norm.test function:
+delta<-(xbar24-xbar25)
+d<-(delta-delta0)/sqrt(sigma1^2+sigma2^2)
+pwr.norm.test(d,n1,0.05,alt='g')
+
+#We can also compute the type II error and power of the test manually:
+beta <- pnorm(zc-((delta-delta0)/sed)); beta
+power<-1-beta; power
+
+#We can use our plotbeta function with the required parameters:
+plotmean.beta(sed,zc,delta,n=1,type='z',alt='g')
+
+#In the second part, we need to determine the required sample size
+#Again, we can use the pwr.norm.test function as seen below:
+pwr.norm.test(d,n=NULL,0.05,power=0.90,alt='g')
+
+#We can calculate the required sample size also manually. 
+#The parameters beta and zbeta are determined.
+beta2 <- 0.10
+zbeta <-qnorm(1-beta2); zbeta
+
+#The required sample size is calculated.
+nreq<-((zc+zbeta)/d)^2; nreq
+ceiling(nreq)
+```
+\
+...
+
+***
+
+#### 3.2.2.4. Hypothesis Tests on the Ratio of Population Variances of Two Samples
+F test was applied since two populations are independent and populations perform normal distribution for testing on the ratio of population variances of two samples.
+...
+\
+\
+```{r 3.2.2.4}
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+"FOR PERSONNEL EXPENDITURES AND OTHER CURRENT EXPENDITURES"
+#We want to test the null hypothesis H0: sigma1^2=sigma2^2 against the one-sided (greater) alternative.
+#Define problem data.
+var1<-var(data_22$PE)
+var2<-var(data_22$OCE)
+n1<-42
+n2<-42
+alpha<-0.05
+
+#Find the upper and lower critical values
+fcup <- qf(alpha/2,n1-1,n2-1,lower=F); fcup
+fclo <- qf(1-alpha/2,n1-1,n2-1,lower=F); fclo
+
+#Calculate the test statistic
+f0 <- (var1/var2); f0
+
+#Give a decision with our testvar.cv function
+testvar.cv(fclo,fcup,f0,theta0=1,alpha=0.05,alt='g')
+
+#Calculate the p-value and give a decision with our test.pval function
+pval <- pf(f0,n1-1,n2-1); pval
+
+
+#Alternatively, we can use var.test() built-in function.
+var.test(data_22$PE,data_22$OCE,alt='g')
+
+#Use our plotvar.hypothesis function to plot the hypothesis test
+plotvar.hypothesis(f0,alpha,df1=n1-1,df2=n2-1,type='f',alt='g')
+
+"FOR TEST ON PERSONNEL EXPENDITURES AND OTHER CURRENT EXPENDITURES "
+#Define scale parameter and compute the power of the test with our power.var.test() function:
+lambda <- 0.5
+power.var.test(n1,lambda,sig.level=0.05,power=NULL,type="t",alt="o")
+
+#We can use our plotvar.beta function with the required parameters:
+plotvar.beta(lambda,alpha,n1-1,n2-1,type='f',alt='o')
+
+
+"FOR PERSONNEL EXPENDITURES AND DEFENCE"
+#We want to test the null hypothesis H0: sigma1^2=sigma2^2 against the one-sided (greater) alternative.
+#Define problem data.
+var1<-var(data_22$PE)
+var3<-var(data_22$D)
+n1<-42
+n2<-42
+alpha<-0.05
+
+
+
+#Calculate the test statistic
+f1 <- (var1/var3); f1
+
+#Give a decision with our testvar.cv function
+testvar.cv(fclo,fcup,f1,theta0=1,alpha=0.05,alt='g')
+
+#Calculate the p-value and give a decision with our test.pval function
+pval1 <- pf(f1,n1-1,n2-1); pval1
+
+
+#Alternatively,--e can use var.test() built-in function.
+var.test(data_22$PE,data_22$D,alt='g')
+
+#Use our plotvar.hypothesis function to plot the hypothesis test
+plotvar.hypothesis(f1,alpha,df1=n1-1,df2=n2-1,type='f',alt='g')
+
+"FOR TEST ON PERSONNEL EXPENDITURES AND DEFENCE "
+#Define scale parameter and compute the power of the test with our power.var.test() function:
+lambda1 <- 0.36
+power.var.test(n1,lambda1,sig.level=0.05,power=NULL,type="t",alt="o")
+
+#We can use our plotvar.beta function with the required parameters:
+plotvar.beta(lambda1,alpha,n1-1,n2-1,type='f',alt='o')
+
+"FOR OTHER CURRENT EXPENDITURES AND DEFENCE"
+#We want to test the null hypothesis H0: sigma1^2=sigma2^2 against the one-sided (greater) alternative.
+#Define problem data.
+var2<-var(data_22$OCE)
+var3<-var(data_22$D)
+n1<-42
+n2<-42
+alpha<-0.05
+
+
+
+#Calculate the test statistic
+f2 <- (var2/var3); f2
+
+#Give a decision with our testvar.cv function
+testvar.cv(fclo,fcup,f2,theta0=1,alpha=0.05,alt='g')
+
+#Calculate the p-value and give a decision with our test.pval function
+pval2 <- pf(f2,n1-1,n2-1); pval2
+
+
+#Alternatively, we can use var.test() built-in function.
+var.test(data_22$OCE,data_22$D,alt='g')
+
+#Use our plotvar.hypothesis function to plot the hypothesis test
+plotvar.hypothesis(f2,alpha,df1=n1-1,df2=n2-1,type='f',alt='g')
+
+"FOR TEST ON OTHER CURRENT EXPENDITURES AND DEFENCE "
+#Define scale parameter and compute the power of the test with our power.var.test() function:
+lambda2 <- 1
+power.var.test(n1,lambda2,sig.level=0.05,power=NULL,type="t",alt="o")
+
+#We can use our plotvar.beta function with the required parameters:
+plotvar.beta(lambda2,alpha,n1-1,n2-1,type='f',alt='o')
+
+"FOR DEFENCE AND CURRENT EXPENDITURES "
+#We want to test the null hypothesis H0: sigma1^2=sigma2^2 against the one-sided (less) alternative.
+#Define problem data.
+var3<-var(data_22$D)
+var4<-var(data_22$CE)
+n1<-42
+n2<-42
+alpha<-0.05
+
+#Find the critical value
+fc <- qf(1-alpha,n1-1,n2-1,lower=F); fc
+
+#Calculate the test statistic
+f3 <- (var3/var4); f3
+
+#Give a decision with our testvar.cv function
+testvar.cv(fc,cvup=NULL,f3,theta0=1,alpha=0.05,alt='l')
+
+#Calculate the p-value and give a decision with our test.pval function
+pval3 <- pf(f3,n1-1,n2-1); pval3
+test.pval(pval3,1,alpha,theta='sigma^2')
+
+#Alternatively, we can use var.test() built-in function.
+var.test(data_22$D,data_22$CE,alt='l')
+
+#Use our plotvar.hypothesis function to plot the hypothesis test
+plotvar.hypothesis(f3,alpha,df1=n1-1,df2=n2-1,type='f',alt='l')
+
+"FOR TEST ON DEFENCE AND CURRENT EXPENDITURES "
+#Define scale parameter and compute the power of the test with our power.var.test() function:
+lambda3 <- 2
+power.var.test(n1,lambda3,sig.level=0.05,power=NULL,type="t",alt="o")
+
+#We can use our plotvar.beta function with the required parameters:
+plotvar.beta(lambda3,alpha,n1-1,n2-1,type='f',alt='o')
+
+
+
+```
+\
+...
+
+***
+### 3.2.3. Goodness of Fit Tests and Contingency Analyses
+The goodness of fit test is used to determine whether
+sample data are consistent with a hypothesized distribution. If X2 is greater than critical value, the null hypothesis will be rejected
+...
+\
+\
+```{r 3.2.3}
+
+#For current expenditures
+
+k <- 7
+xbar <- mean(data_22$CE) 
+sd <- sd(data_22$CE)
+z <- qnorm(0:k/k); z
+interval <- xbar+z*sd; interval
+gftCE<-(data_22$CE)
+gftCE.breaks <- seq(650,2340682000,by=293000000)  
+gftCE.cut<- cut(gftCE,gftCE.breaks,right = F)
+gftCE.freq<- table((gftCE.cut))
+gftCE.freq
+
+#Plot the probabilities of each cell from standard normal distribution with k=7 equal bins.
+x <- seq(-2,2,0.01)
+plot(x,dnorm(x),type="l",yaxt='n',xlab='z',ylab='')
+abline(v = z, col = "blue")
+
+
+#Plot the probabilities of each cell from normal distribution with k=7 equal bins.
+plot(x,dnorm(x, xbar, sd),type="l",yaxt='n',ylab='')
+abline(v = interval, col = "blue")
+
+#Observed frequencies of class i are entered into a table and expected frequencies are calculated for pi=1/7.
+cut<-cut(0, interval, right=F)
+voltage.freq<- c(26,3,1,5,2,3,1)
+names(voltage.freq)<-levels(cut)
+voltage.prob<-rep(1/k,k)
+n<-42
+voltage.exp<-n*voltage.prob
+
+#View the observed and expected frequencies together.
+cbind(Observed=voltage.freq,Expected=voltage.exp)
+
+#We do the Goodness of Fit test with 7-2-1=4 degrees of freedom since two parameters of normal dist. is estimated.
+#We need to readjust the degrees of freedom by using the following functions.
+voltage.Xsq<-chisq.test(voltage.freq,p=voltage.prob)
+voltage.Xsq$parameter <- c(df=4)
+voltage.Xsq$p.value <- pchisq(voltage.Xsq$statistic, df=4, lower=F)
+
+#We can view the result of the test, observed and expected frequencies.
+voltage.Xsq 
+voltage.table<-rbind(observed=voltage.Xsq$observed, expected=voltage.Xsq$expected); t(voltage.table) 
+
+barplot(voltage.table,ylim=c(0,25),beside=TRUE,legend=TRUE,main="Observed vs. Expected Frequencies",col=c("blue", "red"),xlab="YTL", ylab="Frequency")
+
+#We can plot the hypothesis testing for goodness of fit using plotvar.hypothesis function that we defined before.
+plotvar.hypothesis(voltage.Xsq$statistic,alpha=0.05,df1=4,type='c',alt='g')
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+#For Personnel expenditures
+
+k <- 7
+xbar <- mean(data_22$PE) 
+sd <- sd(data_22$PE)
+z <- qnorm(0:k/k); z
+interval <- xbar+z*sd; interval
+gftPE<-(data_22$CE)
+gftPE.breaks <- seq(550,1965616054,by=245702000)  
+gftPE.cut<- cut(gftPE,gftPE.breaks,right = F)
+gftPE.freq<- table((gftPE.cut))
+gftPE.freq
+
+#Plot the probabilities of each cell from standard normal distribution with k=7 equal bins.
+x <- seq(-2,2,0.01)
+plot(x,dnorm(x),type="l",yaxt='n',xlab='z',ylab='')
+abline(v = z, col = "blue")
+
+
+#Plot the probabilities of each cell from normal distribution with k=7 equal bins.
+plot(x,dnorm(x, xbar, sd),type="l",yaxt='n',ylab='')
+abline(v = interval, col = "blue")
+
+#Observed frequencies of class i are entered into a table and expected frequencies are calculated for pi=1/7.
+cut<-cut(0, interval, right=F)
+voltage.freq<- c(26,2,1,2,5,2,2)
+names(voltage.freq)<-levels(cut)
+voltage.prob<-rep(1/k,k)
+n<-42
+voltage.exp<-n*voltage.prob
+
+#View the observed and expected frequencies together.
+cbind(Observed=voltage.freq,Expected=voltage.exp)
+
+#We do the Goodness of Fit test with 7-2-1=4 degrees of freedom since two parameters of normal dist. is estimated.
+#We need to readjust the degrees of freedom by using the following functions.
+voltage.Xsq<-chisq.test(voltage.freq,p=voltage.prob)
+voltage.Xsq$parameter <- c(df=4)
+voltage.Xsq$p.value <- pchisq(voltage.Xsq$statistic, df=4, lower=F)
+
+#We can view the result of the test, observed and expected frequencies.
+voltage.Xsq 
+voltage.table<-rbind(observed=voltage.Xsq$observed, expected=voltage.Xsq$expected); t(voltage.table) 
+
+barplot(voltage.table,ylim=c(0,25),beside=TRUE,legend=TRUE,main="Observed vs. Expected Frequencies",col=c("blue", "red"),xlab="YTL", ylab="Frequency")
+
+#We can plot the hypothesis testing for goodness of fit using plotvar.hypothesis function that we defined before.
+plotvar.hypothesis(voltage.Xsq$statistic,alpha=0.05,df1=4,type='c',alt='g')
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+#For Other Current expenditures
+
+k <- 7
+xbar <- mean(data_22$OCE) 
+sd <- sd(data_22$OCE)
+z <- qnorm(0:k/k); z
+interval <- xbar+z*sd; interval
+gftOCE<-(data_22$OCE)
+gftOCE.breaks <- seq(110,375065559,by=53581000)  
+gftOCE.cut<- cut(gftOCE,gftOCE.breaks,right = F)
+gftOCE.freq<- table((gftOCE.cut))
+gftOCE.freq
+
+#Plot the probabilities of each cell from standard normal distribution with k=7 equal bins.
+x <- seq(-2,2,0.01)
+plot(x,dnorm(x),type="l",yaxt='n',xlab='z',ylab='')
+abline(v = z, col = "blue")
+
+
+#Plot the probabilities of each cell from normal distribution with k=7 equal bins.
+plot(x,dnorm(x, xbar, sd),type="l",yaxt='n',ylab='')
+abline(v = interval, col = "blue")
+
+#Observed frequencies of class i are entered into a table and expected frequencies are calculated for pi=1/8.
+cut<-cut(0, interval, right=F)
+voltage.freq<- c(27,2,2,2,8,3,1)
+names(voltage.freq)<-levels(cut)
+voltage.prob<-rep(1/k,k)
+n<-42
+voltage.exp<-n*voltage.prob
+
+#View the observed and expected frequencies together.
+cbind(Observed=voltage.freq,Expected=voltage.exp)
+
+#We do the Goodness of Fit test with 7-2-1=4 degrees of freedom since two parameters of normal dist. is estimated.
+#We need to readjust the degrees of freedom by using the following functions.
+voltage.Xsq<-chisq.test(voltage.freq,p=voltage.prob)
+voltage.Xsq$parameter <- c(df=4)
+voltage.Xsq$p.value <- pchisq(voltage.Xsq$statistic, df=4, lower=F)
+
+#We can view the result of the test, observed and expected frequencies.
+voltage.Xsq 
+voltage.table<-rbind(observed=voltage.Xsq$observed, expected=voltage.Xsq$expected); t(voltage.table) 
+
+barplot(voltage.table,ylim=c(0,25),beside=TRUE,legend=TRUE,main="Observed vs. Expected Frequencies",col=c("blue", "red"),xlab="YTL", ylab="Frequency")
+
+#We can plot the hypothesis testing for goodness of fit using plotvar.hypothesis function that we defined before.
+plotvar.hypothesis(voltage.Xsq$statistic,alpha=0.05,df1=4,type='c',alt='g')
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+#For Defence
+
+k <- 7
+xbar <- mean(data_22$D) 
+sd <- sd(data_22$D)
+z <- qnorm(0:k/k); z
+interval <- xbar+z*sd; interval
+gftD<-(data_22$D)
+gftD.breaks <- seq(140,170499000,by=21320000)  
+gftD.cut<- cut(gftD,gftD.breaks,right = F)
+gftD.freq<- table((gftD.cut))
+gftD.freq
+
+#Plot the probabilities of each cell from standard normal distribution with k=7 equal bins.
+x <- seq(-2,2,0.01)
+plot(x,dnorm(x),type="l",yaxt='n',xlab='z',ylab='')
+abline(v = z, col = "blue")
+
+
+#Plot the probabilities of each cell from normal distribution with k=7 equal bins.
+plot(x,dnorm(x, xbar, sd),type="l",yaxt='n',ylab='')
+abline(v = interval, col = "blue")
+
+#Observed frequencies of class i are entered into a table and expected frequencies are calculated for pi=1/7.
+cut<-cut(0, interval, right=F)
+voltage.freq<- c(21,3,1,3,0,2,1)
+names(voltage.freq)<-levels(cut)
+voltage.prob<-rep(1/k,k)
+n<-42
+voltage.exp<-n*voltage.prob
+
+#View the observed and expected frequencies together.
+cbind(Observed=voltage.freq,Expected=voltage.exp)
+
+#We do the Goodness of Fit test with 7-2-1=4 degrees of freedom since two parameters of normal dist. is estimated.
+#We need to readjust the degrees of freedom by using the following functions.
+voltage.Xsq<-chisq.test(voltage.freq,p=voltage.prob)
+voltage.Xsq$parameter <- c(df=4)
+voltage.Xsq$p.value <- pchisq(voltage.Xsq$statistic, df=4, lower=F)
+
+#We can view the result of the test, observed and expected frequencies.
+voltage.Xsq 
+voltage.table<-rbind(observed=voltage.Xsq$observed, expected=voltage.Xsq$expected); t(voltage.table) 
+
+barplot(voltage.table,ylim=c(0,25),beside=TRUE,legend=TRUE,main="Observed vs. Expected Frequencies",col=c("blue", "red"),xlab="YTL", ylab="Frequency")
+
+#We can plot the hypothesis testing for goodness of fit using plotvar.hypothesis function that we defined before.
+plotvar.hypothesis(voltage.Xsq$statistic,alpha=0.05,df1=4,type='c',alt='g')
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+#For GNP
+
+k <- 7
+xbar <- mean(data_22$GNP) 
+sd <- sd(data_22$GNP)
+z <- qnorm(0:k/k); z
+interval <- xbar+z*sd; interval
+gftGNP<-(data_22$GNP)
+gftGNP.breaks <- seq(3800,18334799700,by=2291849487)  
+gftGNP.cut<- cut(gftD,gftGNP.breaks,right = F)
+gftGNP.freq<- table((gftGNP.cut))
+gftGNP.freq
+
+#Plot the probabilities of each cell from standard normal distribution with k=7 equal bins.
+x <- seq(-2,2,0.01)
+plot(x,dnorm(x),type="l",yaxt='n',xlab='z',ylab='')
+abline(v = z, col = "blue")
+
+
+#Plot the probabilities of each cell from normal distribution with k=7 equal bins.
+plot(x,dnorm(x, xbar, sd),type="l",yaxt='n',ylab='')
+abline(v = interval, col = "blue")
+
+#Observed frequencies of class i are entered into a table and expected frequencies are calculated for pi=1/7.
+cut<-cut(0, interval, right=F)
+voltage.freq<- c(27,3,5,3,1,1,2)
+names(voltage.freq)<-levels(cut)
+voltage.prob<-rep(1/k,k)
+n<-42
+voltage.exp<-n*voltage.prob
+
+#View the observed and expected frequencies together.
+cbind(Observed=voltage.freq,Expected=voltage.exp)
+
+#We do the Goodness of Fit test with 7-2-1=4 degrees of freedom since two parameters of normal dist. is estimated.
+#We need to readjust the degrees of freedom by using the following functions.
+voltage.Xsq<-chisq.test(voltage.freq,p=voltage.prob)
+voltage.Xsq$parameter <- c(df=4)
+voltage.Xsq$p.value <- pchisq(voltage.Xsq$statistic, df=4, lower=F)
+
+#We can view the result of the test, observed and expected frequencies.
+voltage.Xsq 
+voltage.table<-rbind(observed=voltage.Xsq$observed, expected=voltage.Xsq$expected); t(voltage.table) 
+
+barplot(voltage.table,ylim=c(0,25),beside=TRUE,legend=TRUE,main="Observed vs. Expected Frequencies",col=c("blue", "red"),xlab="YTL", ylab="Frequency")
+
+#We can plot the hypothesis testing for goodness of fit using plotvar.hypothesis function that we defined before.
+plotvar.hypothesis(voltage.Xsq$statistic,alpha=0.05,df1=4,type='c',alt='g')
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+#Define the observed contingency table of CE, PE, OCE, D and GNP
+contce <- c(data_22$CE)
+contpe <- c(data_22$PE)
+contoce <- c(data_22$OCE)
+contd <- c(data_22$D)
+contgnp <- c(data_22$GNP)
+
+contall <- rbind(contce,contpe,contoce,contd,contgnp); addmargins(contall)
+
+contall.prop <- prop.table(contall)
+
+#Compute ui, vj and expected frequencies.
+u <- rowSums(contall.prop); u
+
+v <- colSums(contall.prop); v
+
+E <- sum(contall)*u%o%v; addmargins(E)
+
+#We do the Goodness of Fit test with (42-1)*(5-1)=164 degrees of freedom
+Xsq <- chisq.test(contall)
+
+#We can view the result of the test, observed and expected frequencies.
+Xsq
+cont.table<-rbind(observed=Xsq$observed, expected=Xsq$expected); cont.table
+
+barplot(cont.table,beside=TRUE,legend=TRUE,main="Observed vs. Expected Frequencies",
+        col=c("blue", "red","yellow","green"),xlab="All datasets", ylab="Frequency")
+
+#We can plot the hypothesis testing for goodness of fit using plot.hypothesis function that we defined before.
+plotvar.hypothesis(Xsq$statistic,alpha=0.05,df1=164,type='c',alt='g')
+
+```
+\
+...
+
+***
+### 3.2.4. Nonparametric Test Procedures
+Nonparametric tests are also called distribution-free tests used for data does not follow a specific distribution. 
+...
+\
+\
+```{r 3.2.4}
+#Write your codes here. Their results will appear after knitting the markdown file.
+```
+\
+...
+
+***
+
+#### 3.2.4.1. Sign Test
+The sign test is used to test the null hypothesis that the median of a distribution is equal to some value here median= mean is tested 
+...
+\
+\
+```{r 3.2.4.1}
+"FOR CURRENT EXPENDITURES"
+mediance <-(mean(data_22$CE))
+expenditurece <-(data_22$CE)
+alpha <- 0.05
+
+SIGN.test(expenditurece, md = mediance)
+
+"FOR PERSONNEL EXPENDITURES"
+medianpe <-(mean(data_22$PE))
+expenditurepe <-(data_22$PE)
+alpha <- 0.05
+
+SIGN.test(expenditurepe, md = medianpe)
+
+"FOR OTHER CURRENT EXPENDITURES"
+medianoce <-(mean(data_22$OCE))
+expenditureoce <-(data_22$OCE)
+alpha <- 0.05
+
+SIGN.test(expenditureoce, md = medianoce)
+
+"FOR DEFENCE"
+mediand <-(mean(data_22$D))
+expenditured <-(data_22$D)
+alpha <- 0.05
+
+SIGN.test(expenditured, md = mediand)
+
+"FOR GNP"
+mediangnp <-(mean(data_22$GNP))
+expendituregnp <-(data_22$GNP)
+alpha <- 0.05
+
+SIGN.test(expendituregnp, md = mediangnp)
+
+
+#Write your codes here. Their results will appear after knitting the markdown file.
+```
+\
+...
+
+***
+#### 3.2.4.2. Wilcoxon Signed-Rank Test
+The Wilcoxon signed-rank test is a non-parametric statistical hypothesis test used to compare two related samples. Here again median is tested
+...
+\
+\
+```{r 3.2.4.2}
+"FOR CURRENT EXPENDITURES"
+mediance <-(mean(data_22$CE))
+expenditurece <-(data_22$CE)
+wilcox.test(expenditurece, alt="t",mu=mediance)
+
+"FOR PERSONNEL EXPENDITURES"
+medianpe <-(mean(data_22$PE))
+expenditurepe <-(data_22$PE)
+wilcox.test(expenditurepe, alt="t",mu=medianpe)
+
+"FOR OTHER CURRENT EXPENDITURES"
+medianoce <-(mean(data_22$OCE))
+expenditureoce <-(data_22$OCE)
+wilcox.test(expenditureoce, alt="t",mu=medianoce)
+
+"FOR DEFENCE"
+mediand <-(mean(data_22$D))
+expenditured <-(data_22$D)
+wilcox.test(expenditured, alt="t",mu=mediand)
+
+"FOR GNP"
+mediangnp <-(mean(data_22$GNP))
+expendituregnp <-(data_22$GNP)
+wilcox.test(expendituregnp, alt="t",mu=mediangnp)
+
+
+```
+\
+...
+
+***
+#### 3.2.4.3. Wilcoxon Rank-Sum Test 
+Wilcoxon Rank Sum Test, is used to test whether two samples are likely to derive from the same population. Here Personnel Expenditures-Other Current Expenditures,Personnel Expenditures and Defence, Other Current expentitures and defence are tested
+...
+\
+\
+```{r 3.2.4.3}
+
+"FOR PERSONNEL EXPENDITURES AND OTHER CURRENT EXPENDITURES"
+axial<-cbind(data_22$PE, data_22$OCE); axial
+
+boxplot(axial,horizontal=T,xlab="YTL",main="Boxplot for PERSONNEL EXPENDITURES AND OTHER CURRENT EXPENDITURES")
+
+wilcox.test(data_22$PE, data_22$OCE, alt="t", exact=F, correct=F)
+
+"FOR PERSONNEL EXPENDITURES AND DEFENCE"
+axial<-cbind(data_22$PE, data_22$D); axial
+
+boxplot(axial,horizontal=T,xlab="YTL",main="Boxplot for FOR PERSONNEL EXPENDITURES AND DEFENCE")
+
+wilcox.test(data_22$PE, data_22$D, alt="t", exact=F, correct=F)
+
+"FOR OTHER CURRENT EXPENDITURES AND DEFENCE"
+axial<-cbind(data_22$OCE, data_22$D); axial
+
+
+boxplot(axial,horizontal=T,xlab="YTL",main="Boxplot for FOR OTHER CURRENT EXPENDITURES AND DEFENCE")
+
+wilcox.test(data_22$OCE, data_22$D, alt="t", exact=F, correct=F)
+
+"FOR CURRENT EXPENDITURES AND DEFENCE"
+axial<-cbind(data_22$CE, data_22$D); axial
+
+boxplot(axial,horizontal=T,xlab="YTL",main="Boxplot for FOR CURRENT EXPENDITURES AND DEFENCE")
+
+wilcox.test(data_22$CE, data_22$D, alt="t", exact=F, correct=F)
+
+
+#Write your codes here. Their results will appear after knitting the markdown file.
+```
+\
+...
+
+***
+
+## 3.3. Exploratory Data Analyses
+Exploratory data analysis (EDA) is used by data scientists to analyze and investigate data sets and summarize their main characteristics, often employing data visualization methods. It can also help determine if the statistical techniques you are considering for data analysis are appropriate
+...
+\
+\
+```{r 3.3}
+#Write your codes here. Their results will appear after knitting the markdown file.
+```
+\
+...
+
+***
+
+### 3.3.1. Correlation Analyses
+Correlation analysis is a method of statistical evaluation used to study the strength of a relationship between two, numerically measured, continuous variables
+...
+\
+\
+```{r 3.3.1}
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+
+```
+\
+...
+
+***
+
+#### 3.3.1.1. Hypothesis Tests on the Correlation Coefficient 
+We perform a hypothesis test of the "significance of the correlation coefficient" to decide whether the linear relationship in the sample data is strong enough to use to model the relationship in the population. R squared values are compared
+...
+\
+\
+```{r 3.3.1.1}
+#Write your codes here. Their results will appear after knitting the markdown file.
+m <- length(data_22$CE)
+GNP <- c(data_22$GNP)
+ct.mm <- qt(0.05/2,m-2,lower=F); ct.mm
+cor.test(data_22$CE,GNP)
+cor.test(data_22$CE,GNP)
+"FOR Personnel EXPENDITURES and GNP"
+m <- length(data_22$PE)
+GNP <- c(data_22$GNP)
+ct.mm <- qt(0.05/2,m-2,lower=F); ct.mm
+cor.test(data_22$PE,GNP)
+"FOR Other Current  EXPENDITURES and GNP"
+m <- length(data_22$OCE)
+GNP <- c(data_22$GNP)
+ct.mm <- qt(0.05/2,m-2,lower=F); ct.mm
+cor.test(data_22$OCE,GNP)
+"FOR DEFENCE and GNP"
+m <- length(data_22$D)
+GNP <- c(data_22$GNP)
+ct.mm <- qt(0.05/2,m-2,lower=F); ct.mm
+cor.test(data_22$D,GNP)
+```
+\
+...
+
+***
+#### 3.3.1.2. Confidence Intervals for the Correlation Coefficient
+A confidence interval gives an estimated range of r values which is likely to include an unknown population ρ, the estimated range being calculated from a given set of sample data.The confidence intervals of correlation coefficient are computed based on the sample mean r and sample standard deviation.
+...
+\
+\
+```{r 3.3.1.2}
+#Write your codes here. Their results will appear after knitting the markdown file.
+cor.test(data_22$CE,data_22$GNP)
+cor.test(data_22$PE,data_22$GNP)
+cor.test(data_22$OCE,data_22$GNP)
+cor.test(data_22$D,data_22$GNP)
+```
+\
+...
+
+***
+### 3.3.2. Regression Analyses
+Regression analysis is a set of statistical methods used for the estimation of relationships between a dependent variable and one or more independent variables.
+...
+\
+\
+```{r 3.3.2}
+#Write your codes here. Their results will appear after knitting the markdown file.
+
+```
+\
+...
+
+***
+
+#### 3.3.2.1. Regression Modeling
+ Regression analysis is a predictive modelling technique that analyzes the relation between the target or dependent variable and independent variable in a dataset. GNP is dependent variable and other metrics are independent so simple model and  3d model are drawn for analysis of relationship
+...
+\
+\
+```{r 3.3.2.1}
+require(scatterplot3d)
+#Write your codes here. Their results will appear after knitting the markdown file.
+n <- 42
+y <- data_22$GNP
+
+x1 <- data_22$CE
+
+x2<-data_22$PE
+
+x3 <- data_22$OCE
+
+x4<-data_22$D
+"FOR CURRENT EXPENDITURES"
+#for defining model
+model1.1 <- lm(data_22$GNP~data_22$CE); model1.1
+#for plotting
+plot(data_22$CE,data_22$GNP, pch = 16, cex = 1.3, col = "red", main = "Current Expenditures Scatter Plot", xlab = "Current Expenditures", ylab = "GNP")
+abline(model1.1$coefficients)
+
+"FOR PERSONNEL EXPENDITURES"
+#for defining model
+model1.2 <- lm(data_22$GNP~data_22$PE); model1.2
+#for plotting
+plot(data_22$PE,data_22$GNP, pch = 16, cex = 1.3, col = "blue", main = "Personnel Expenditures Scatter Plot", xlab = "Personnel Expenditures", ylab = "GNP")
+abline(model1.2$coefficients)
+
+"FOR OTHER CURRENT EXPENDITURES"
+#for defining model
+model1.3 <- lm(data_22$GNP~data_22$OCE); model1.3
+#for plotting
+plot(data_22$OCE,data_22$GNP, pch = 16, cex = 1.3, col = "orange", main = "Other Current Expenditures Scatter Plot", xlab = "Other Current Expenditures", ylab = "GNP")
+abline(model1.3$coefficients)
+
+"FOR DEFENCE"
+#for defining model
+model1.4 <- lm(data_22$GNP~data_22$D); model1.4
+#for plotting
+plot(data_22$D,data_22$GNP, pch = 16, cex = 1.3, col = "green", main = "Defence Scatter Plot", xlab = "Defence", ylab = "GNP")
+abline(model1.4$coefficients)
+
+#Create the multiple regression model for GNP, CE and D.
+model1<-lm(y~x1+x4); model1
+
+#Obtain the scatter plot matrix.
+pairs(y~x1+x4,pch=17,col='red',main='Matrix of scatter plots')
+
+#Create the multiple regression model.
+model1<-lm(y~x1+x4,); model1
+
+#Plot the regression plane on the 3D scatter diagram.
+G<-scatterplot3d(x1,x4, y, pch=17, color='red', main ="Regression Plane")
+
+
+
+
+
+```
+\
+...
+
+***
+#### 3.3.2.2. Hypothesis Tests on the Slope and Intercept 
+We conducted Hypothesis test on slope and intercept for each variable in two tail test type. Then results are compared with critical value and decision is given about rejected or not
+...
+\
+\
+```{r 3.3.2.2}
+# FOR GNP DEPENDENT MULTIPLE
+summary(model1); anova(model1)
+
+#FOR HYPOTHESIS ON HO:B(0,1)=0 AND H1:B(0,1)=1  WITH ALPHA 0.01 F AND T VALUES ARE COMPARISED
+
+ n <- 42
+"T TEST FOR ALPHA: 0.01"
+tc <- qt(0.01/2,n-2,lower=F); tc
+
+"FOR CURRENT EXPENDITURES"
+
+#for obtaining information about model
+summary(model1.1); anova(model1.1)
+
+"FOR PERSONNEL EXPENDITURES"
+
+#for obtaining information about model
+summary(model1.2); anova(model1.2)
+
+"FOR OTHER CURRENT EXPENDITURES"
+
+#for obtaining information about model
+summary(model1.3); anova(model1.3)
+
+"FOR DEFENCE"
+
+#for obtaining information about model
+summary(model1.4); anova(model1.4)
+
+
+```
+\
+...
+
+***
+#### 3.3.2.3. Confidence Intervals for the Slope and Intercept
+The slope representing the relationship of Y with X, and a 95% confidence interval for the x value were calculated and examined whether it excluded 0. If it does not contain 0, we can conclude that there is a significant linear relationship between X and Y.
+...
+\
+\
+```{r 3.3.2.3}
+#We can find the 95% CI for the intercept and slopes as follows:
+confint(model1.1, level=0.95)
+
+confint(model1.2, level=0.95)
+
+confint(model1.3, level=0.95)
+
+confint(model1.4, level=0.95)
+#FOR MULTIPLE 
+confint(model1)
+
+
+```
+\
+...
+
+***
+#### 3.3.2.4. Analysis of Sum of Squares and Mean Squares
+The sum of squares represents a measure of variation or deviation from the mean. It is calculated as a summation of the squares of the differences from the mean. The calculation of the total sum of squares considers both the sum of squares from the factors and from randomness or error and also we calculated R squared value and table form is established
+...
+\
+\
+```{r 3.3.2.4}
+
+n<-42
+"FOR CURRENT EXPENDITURES"
+#for Sum of Squares analysis SST,SSR,SSE are Calculated
+xbar.g<- mean(data_22$GNP)  
+sst.ce <- sum((data_22$GNP-xbar.g)^2); sst.ce  
+ssr.ce <- sum((model1.1$fitted.values-xbar.g)^2); ssr.ce  
+sse.ce <- sum(model1.1$residuals^2); sse.ce  
+f0 <- (ssr.ce/1)/(sse.ce/(n-2)); f0
+
+#for Mean Squares MSR,MSE are calculated
+msr.ce <- anova(model1.1)$`Mean Sq`[1]  
+mse.ce <- anova(model1.1)$`Mean Sq`[2]
+#R square is calculated
+rsq.ce <- ssr.ce/sst.ce; rsq.ce
+#for table form
+cbind(ssr.ce,sse.ce,sst.ce,msr.ce,mse.ce,rsq.ce) 
+
+"FOR PERSONNEL EXPENDITURES"
+#for Sum of Squares analysis SST,SSR,SSE are Calculated
+sst.pe <- sum((data_22$GNP-xbar.g)^2); sst.pe  
+ssr.pe <- sum((model1.2$fitted.values-xbar.g)^2); ssr.pe  
+sse.pe <- sum(model1.2$residuals^2); sse.pe  
+f1 <- (ssr.pe/1)/(sse.pe/(n-2)); f1
+
+#for Mean Squares MSR,MSE are calculated
+msr.pe <- anova(model1.2)$`Mean Sq`[1]  
+mse.pe <- anova(model1.2)$`Mean Sq`[2] 
+
+#R square is calculated
+rsq.pe <- ssr.pe/sst.pe; rsq.pe
+#for table form
+cbind(ssr.pe,sse.pe,sst.pe,msr.pe,mse.pe,rsq.pe)
+
+"FOR OTHER CURRENT EXPENDITURES"
+
+#for Sum of Squares analysis SST,SSR,SSE are Calculated
+sst.oce <- sum((data_22$GNP-xbar.g)^2); sst.oce  
+ssr.oce <- sum((model1.3$fitted.values-xbar.g)^2); ssr.oce  
+sse.oce <- sum(model1.3$residuals^2); sse.oce  
+f2 <- (ssr.oce/1)/(sse.oce/(n-2)); f2
+
+#for Mean Squares MSR,MSE are calculated
+msr.oce <- anova(model1.3)$`Mean Sq`[1]  
+mse.oce <- anova(model1.3)$`Mean Sq`[2] 
+
+#R square is calculated
+rsq.oce <- ssr.oce/sst.oce; rsq.oce
+
+#for table form
+cbind(ssr.oce,sse.oce,sst.oce,msr.oce,mse.oce,rsq.oce)
+
+"DEFENCE"
+
+#for Sum of Squares analysis SST,SSR,SSE are Calculated
+sst.d <- sum((data_22$GNP-xbar.g)^2); sst.d  
+ssr.d <- sum((model1.4$fitted.values-xbar.g)^2); ssr.d  
+sse.d <- sum(model1.4$residuals^2); sse.d  
+f3 <- (ssr.d/1)/(sse.d/(n-2)); f3
+
+#for Mean Squares MSR,MSE are calculated
+msr.d <- anova(model1.4)$`Mean Sq`[1]  
+mse.d <- anova(model1.4)$`Mean Sq`[2] 
+
+#R square is calculated
+rsq.d <- ssr.d/sst.d; rsq.d
+
+#for table form
+cbind(ssr.d,sse.d,sst.d,msr.d,mse.d,rsq.d)
+
+#FOR MULTIPLE
+ybarm<-mean(y)
+#Calculate SST,SSR,SSE
+sst <- sum((y-ybarm)^2); sst
+ssr <- sum((model1$fitted.values-ybarm)^2); ssr
+sse <- sum(model1$residuals^2); sse
+
+#Calculate MSR and MSE.
+msr <- ssr/2; msr
+mse <- sse/(n-3); mse
+rsq <- ssr/sst ; rsq
+
+cbind(ssr,sse,sst,msr,mse,rsq)
+
+
+```
+\
+...
+
+***
+#### 3.3.2.5. Confidence Interval for the Mean Response
+A mean response interval is a confidence interval for the mean of all Y's at a given X value. A prediction interval is a prediction interval for one single Y at a given X value. We predicted x value=1 for y analysis
+...
+\
+\
+```{r 3.3.2.5}
+#We found  a 95% confidence interval about the mean response for each data.
+#For Finding the value of mean oxygen purity when x0=1
+
+"FOR CURRENT EXPENDITURES"
+new.dat <- data.frame(x=1)
+predict(model1.1, newdata = new.dat, interval = 'confidence')
+
+"FOR PERSONNEL EXPENDITURES"
+new.dat <- data.frame(x=1)
+predict(model1.2, newdata = new.dat, interval = 'confidence')
+
+"FOR OTHER CURRENT EXPENDITURES"
+new.dat <- data.frame(x=1)
+predict(model1.3, newdata = new.dat, interval = 'confidence')
+
+"FOR DEFENCE"
+new.dat <- data.frame(x=1)
+predict(model1.4, newdata = new.dat, interval = 'confidence')
+#We can find the 95% CI on the mean response as follows MULTIPLE :
+new.dat <- data.frame(x1=8, x2=15,x3=6,x4=20)
+predict(model1, newdata = new.dat, interval = 'c')
+```
+\
+...
+
+***
+#### 3.3.2.6. Prediction Interval for a New Observation
+Prediction intervals tell you where you can expect to see the next data point sampled. ... Prediction intervals must account for both the uncertainty in estimating the population mean, plus the random variation of the individual values. So a prediction interval is always wider than a confidence interval.We predicted x value=1 for y analysis
+...
+\
+\
+```{r 3.3.2.6}
+
+"FOR MULTIPLE"
+new.dat <- data.frame(x1=8,x4=20)
+
+predict(model1, interval = 'p')
+
+
+#KISA KOD#
+
+"FOR CURRENT EXPENDITURES"
+new.dat <- data.frame(x=1)
+predict(model1.1, newdata = new.dat, interval = 'prediction')
+
+
+"FOR DEFENCE"
+new.dat <- data.frame(x=1)
+predict(model1.4, newdata = new.dat, interval = 'prediction')
+
+
+```
+\
+...
+
+***
+#### 3.3.2.7. Analysis of Variance
+ A one-way ANOVA is used for three or more groups of data, to gain information about the relationship between the dependent and independent variables.In general, variances tests assess the variability of the data in multiple groups to determine whether they are different. F tests are anaylzed for ths purpose
+...
+\
+\
+```{r 3.3.2.7}
+"FOR CURRENT EXPENDITURES"
+anova(model1.1)
+"FOR PERSONNEL EXPENDITURES"
+anova(model1.2)
+"FOR OTHER CURRENT EXPENDITURES"
+anova(model1.3)
+"FOR DEFENCE"
+anova(model1.4)
+"FOR MULTIPLE"
+summary(model1); anova(model1)
+
+
+```
+\
+...
+
+***
+#### 3.3.2.8. Adequacy of the Regression Model 
+This model quantifies the percentage of the original uncertainty in the data that is explained by the straight line model.Residuals versus Fitted plot and the Normal Q-Q plot was  shown. When look at Residuals versus Fitted, it is understood that model is inadequacy and linear relationship could not cover the information in the GNP variable. In addition, it is observed that normality cannot be achieved from the Normal Q-Q plot and there are also some outliers. They are put on report and interpreted
+...
+\
+\
+```{r 3.3.2.8}
+plot(model1,1)
+plot(model1,2)
+
+#We can also plot residuals vs. x1 and residuals vs. x4 as follows:
+plot(x1, resid(model1), ylab="Residuals", xlab="x1", main="Residuals vs. x1") 
+abline(0, 0, lty=2) 
+
+plot(x4, resid(model1), ylab="Residuals", xlab="x4", main="Residuals vs. x4") 
+abline(0, 0, lty=2)
+
+```
+\
+...
+
+***
+#### 3.3.2.9. Residuals Analysis
+Residuals analysis was done in the Adequacy of the Regression Model part. Residual analysis graphs such as Residual versus x1(Current Expenditures), Residuals versus x4(Defence) and also interpretation about the Residuals analysis can be seen in the Adequacy of the Regression Model part
+...
+\
+\
+```{r 3.3.2.9}
+
+"ABOVE "
+
+```
+\
+...
+
+***
+## 3.4. Trend Based Forecasting 
+Forecast analysis for Budget Expenditures has been made. Since the data is annual, it cannot be observed any seasonality. Only trend-based forecasting can be applied. Quadratic Trend and Linear Trends are applied and comparision of two are interpreted with R squared. All of Data Quadratic method is more useful than linear trend because of adjusted R squared are high 
+...
+\
+\
+```{r 3.4}
+require(forecast)
+#Write your codes here. Their results will appear after knitting the markdown file.
+#Quadratic Trend
+"FOR CURRENT EXPENDITURES"
+ce.ts <- ts(data_22$CE, start = c(1), end = c(42), freq = 1)
+ce.lm <- tslm(ce.ts ~ trend + I(trend^2))
+summary(ce.lm)
+ce.lm.pred <- forecast(ce.lm, h = 12, level = 0)
+plot(ce.lm.pred, ylab = "Current Expenditures", xlab = "Time", bty = "l",
+     main = "Current Expenditures Quadratic Trend", flty = 2)
+lines(ce.lm$fitted, lwd = 2)
+
+"LINEAR TREND WITH ASSUMPTION ABOUT TRAINING AND VALIDATION"
+ce.ts <- ts(data_22$CE, start = c(1), end = c(42))
+plot(ce.ts, xlab = "Time", ylab = "Current Expenditures", main="Current Expenditures Time Series Plot",ylim = c(500, 2500000000), bty = "l")
+cetrain.ts <- window(ce.ts, start = 1, end = 37)
+cevalid.ts <- window(ce.ts, start = 38, end = 42)
+
+cetrain.lm <- tslm(cetrain.ts ~ trend)
+summary(cetrain.lm)
+cetrain.lm.pred <- forecast(cetrain.lm, h = 12, level = 0)
+plot(cetrain.lm.pred, ylab = "Current Expenditures", xlab = "Time", bty = "l",
+     main = "Current Expenditures Linear Trend ", flty = 2)
+lines(cetrain.lm$fitted, lwd = 2)
+lines(ce.ts)
+accuracy(cetrain.lm.pred$mean,cevalid.ts)
+
+
+
+"FOR PERSONNEL EXPENDITURES"
+pe.ts <- ts(data_22$PE, start = c(1), end = c(42), freq = 1)
+pe.lm <- tslm(pe.ts ~ trend + I(trend^2))
+summary(pe.lm)
+pe.lm.pred <- forecast(pe.lm, h = 12, level = 0)
+plot(pe.lm.pred, ylab = "Personnel Expenditures", xlab = "Time", bty = "l",
+     main = "Personnel Expenditures Quadratic Trend", flty = 2)
+lines(pe.lm$fitted, lwd = 2)
+
+"LINEAR TREND WITH ASSUMPTION ABOUT TRAINING AND VALIDATION"
+pe.ts <- ts(data_22$PE, start = c(1), end = c(42))
+plot(pe.ts, xlab = "Time", ylab = "Personnel Expenditures", main="Personnel Expenditures Time Series Plot",ylim = c(500, 2100000000), bty = "l")
+petrain.ts <- window(pe.ts, start = 1, end = 37)
+pevalid.ts <- window(pe.ts, start = 38, end = 42)
+
+petrain.lm <- tslm(petrain.ts ~ trend)
+summary(petrain.lm)
+petrain.lm.pred <- forecast(petrain.lm, h = 12, level = 0)
+plot(petrain.lm.pred, ylab = "Personnel Expenditures", xlab = "Time", bty = "l",
+     main = "Personnel Expenditures Linear Trend ", flty = 2)
+lines(petrain.lm$fitted, lwd = 2)
+lines(pe.ts)
+accuracy(petrain.lm.pred$mean,pevalid.ts)
+
+
+
+"FOR OTHER CURRENT EXPENDITURES"
+oce.ts <- ts(data_22$OCE, start = c(1), end = c(42), freq = 1)
+oce.lm <- tslm(oce.ts ~ trend + I(trend^2))
+summary(oce.lm)
+oce.lm.pred <- forecast(oce.lm, h = 12, level = 0)
+plot(oce.lm.pred, ylab = "Other Current Expenditures", xlab = "Time", bty = "l",
+     main = "Other Current Expenditures Quadratic Trend", flty = 2)
+lines(oce.lm$fitted, lwd = 2)
+
+"LINEAR TREND WITH ASSUMPTION ABOUT TRAINING AND VALIDATION"
+oce.ts <- ts(data_22$OCE, start = c(1), end = c(42))
+plot(oce.ts, xlab = "Time", ylab = "Other Current Expenditures", main="Other Current Expenditures Time Series Plot",ylim = c(100, 500000000), bty = "l")
+ocetrain.ts <- window(oce.ts, start = 1, end = 37)
+ocevalid.ts <- window(oce.ts, start = 38, end = 42)
+
+ocetrain.lm <- tslm(ocetrain.ts ~ trend)
+summary(ocetrain.lm)
+ocetrain.lm.pred <- forecast(ocetrain.lm, h = 12, level = 0)
+plot(ocetrain.lm.pred, ylab = "Other Current Expenditures", xlab = "Time", bty = "l",
+     main = "Other Current Expenditures Linear Trend ", flty = 2)
+lines(ocetrain.lm$fitted, lwd = 2)
+lines(oce.ts)
+accuracy(ocetrain.lm.pred$mean,ocevalid.ts)
+
+
+
+"FOR DEFENCE"
+d.ts <- ts(data_22$D, start = c(1), end = c(42), freq = 1)
+d.lm <- tslm(d.ts ~ trend + I(trend^2))
+summary(d.lm)
+d.lm.pred <- forecast(d.lm, h = 12, level = 0)
+plot(d.lm.pred, ylab = "Defence", xlab = "Time", bty = "l",main = "Defence Quadratic Trend", flty = 2)
+lines(d.lm$fitted, lwd = 2)
+
+"LINEAR TREND WITH ASSUMPTION ABOUT TRAINING AND VALIDATION"
+d.ts <- ts(data_22$D, start = c(1), end = c(42))
+plot(d.ts, xlab = "Time", ylab = "Defence", main="Defence Time Series Plot",ylim = c(100, 300000000), bty = "l")
+dtrain.ts <- window(d.ts, start = 1, end = 37)
+dvalid.ts <- window(d.ts, start = 38, end = 42)
+
+dtrain.lm <- tslm(dtrain.ts ~ trend)
+summary(dtrain.lm)
+dtrain.lm.pred <- forecast(dtrain.lm, h = 12, level = 0)
+plot(dtrain.lm.pred, ylab = "Defence", xlab = "Time", bty = "l",
+     main = "Defence Linear Trend ", flty = 2)
+lines(dtrain.lm$fitted, lwd = 2)
+lines(d.ts)
+accuracy(dtrain.lm.pred$mean,dvalid.ts)
+
+
+
+"FOR GNP"
+g.ts <- ts(data_22$GNP, start = c(1), end = c(42), freq = 1)
+g.lm <- tslm(g.ts ~ trend + I(trend^2))
+summary(g.lm)
+g.lm.pred <- forecast(g.lm, h = 12, level = 0)
+plot(g.lm.pred, ylab = "GNP", xlab = "Time", bty = "l",main = "GNP Quadratic Trend", flty = 2)
+lines(g.lm$fitted, lwd = 2)
+
+"LINEAR TREND WITH ASSUMPTION ABOUT TRAINING AND VALIDATION"
+g.ts <- ts(data_22$GNP, start = c(1), end = c(42))
+plot(g.ts, xlab = "Time", ylab = "GNP", main="GNP Time Series Plot",ylim = c(3500, 21000000000), bty = "l")
+gtrain.ts <- window(g.ts, start = 1, end = 37)
+gvalid.ts <- window(g.ts, start = 38, end = 42)
+
+gtrain.lm <- tslm(gtrain.ts ~ trend)
+summary(gtrain.lm)
+gtrain.lm.pred <- forecast(gtrain.lm, h = 12, level = 0)
+plot(gtrain.lm.pred, ylab = "GNP", xlab = "Time", bty = "l",
+     main = "GNP Linear Trend ", flty = 2)
+lines(gtrain.lm$fitted, lwd = 2)
+lines(g.ts)
+accuracy(gtrain.lm.pred$mean,gvalid.ts)
+
+
+
+```
+\
+...
+
+***
